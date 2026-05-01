@@ -27,7 +27,7 @@ export async function cacheSet(
 ): Promise<string> {
   const client = getRedisClient()
   const result = await client.set(key, value, { ex: ttl })
-  return result
+  return result as string
 }
 
 export async function cacheDel(key: string): Promise<number> {
