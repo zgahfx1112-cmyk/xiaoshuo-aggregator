@@ -2,87 +2,98 @@
 
 import { useState } from 'react'
 import {
-  Container,
   Box,
+  Container,
   TextField,
   InputAdornment,
   IconButton,
   Typography,
+  Grid,
+  Alert,
   Paper,
 } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
-import HotList from '@/components/HotList'
+import { useRouter } from 'next/navigation'
+import { useBookshelf } from '@/hooks/useBookshelf'
+import BookshelfItemComponent from '@/components/BookshelfItem'
 
 export default function Home() {
+  const router = useRouter()
   const [searchQuery, setSearchQuery] = useState('')
+  const { bookshelf, removeFromBookshelf } = useBookshelf()
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
     if (searchQuery.trim()) {
-      // TODO: Implement search navigation
-      console.log('Search:', searchQuery)
+      router.push(`/search?query=${encodeURIComponent(searchQuery.trim())}`)
     }
   }
 
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: 'grey.50' }}>
-      {/* Header with Search */}
+    <Box sx={{ pb: 7 }}>
+      {/* 顶部搜索框 */}
       <Paper
         elevation={0}
         sx={{
           bgcolor: 'primary.main',
           color: 'white',
-          py: 4,
-          mb: 3,
+          py: 2,
+          px: 2,
         }}
       >
-        <Container maxWidth="lg">
-          <Typography variant="h4" gutterBottom sx={{ fontWeight: 'bold' }}>
-            小说搜索
-          </Typography>
-          <Typography variant="body2" sx={{ mb: 3, opacity: 0.9 }}>
-            聚合多源小说搜索，一键查找热门小说
-          </Typography>
-          <Box
-            component="form"
-            onSubmit={handleSearch}
+        <Box component="form" onSubmit={handleSearch}>
+          <TextField
+            fullWidth
+            size="small"
+            placeholder="搜索小说..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
             sx={{
-              display: 'flex',
-              gap: 1,
+              bgcolor: 'white',
+              borderRadius: 1,
+              '& .MuiOutlinedInput-root': {
+                borderRadius: 1,
+              },
             }}
-          >
-            <TextField
-              fullWidth
-              placeholder="输入小说名称、作者名搜索..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              sx={{
-                bgcolor: 'white',
-                borderRadius: 2,
-                '& .MuiOutlinedInput-root': {
-                  borderRadius: 2,
-                },
-              }}
-              slotProps={{
-                input: {
-                  endAdornment: (
-                    <InputAdornment position="end">
-                      <IconButton type="submit" edge="end" color="primary">
-                        <SearchIcon />
-                      </IconButton>
-                    </InputAdornment>
-                  ),
-                },
-              }}
-            />
-          </Box>
-        </Container>
+            slotProps={{
+              input: {
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton type="submit" edge="end" color="primary">
+                      <SearchIcon />
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              },
+            }}
+          />
+        </Box>
       </Paper>
 
-      {/* Hot List Section */}
-      <Box>
-        <HotList />
-      </Box>
+      {/* 书架内容 */}
+      <Container maxWidth="lg" sx={{ py: 2 }}>
+        <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
+          我的书架
+        </Typography>
+
+        {bookshelf.length === 0 ? (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            书架为空，去发现页找小说吧
+          </Alert>
+        ) : (
+          <Grid container spacing={2}>
+            {bookshelf.map((item) => (
+              <Grid key={item.id} size={{ xs: 6, sm: 4, md: 3 }}>
+                <BookshelfItemComponent
+                  item={item}
+                  onContinueReading={(id) => router.push(`/novel/${id}`)}
+                  onDelete={removeFromBookshelf}
+                />
+              </Grid>
+            ))}
+          </Grid>
+        )}
+      </Container>
     </Box>
   )
 }

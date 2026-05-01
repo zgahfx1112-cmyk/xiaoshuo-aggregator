@@ -69,9 +69,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<SearchApiR
       })
     }
 
-    // Get all available book sources from database
+    // Get all enabled book sources from database
     const dbSources = await prisma.bookSource.findMany({
-      where: { available: true },
+      where: { available: true, enabled: true },
       select: { name: true, config: true },
     })
 

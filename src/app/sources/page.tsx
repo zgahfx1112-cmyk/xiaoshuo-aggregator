@@ -29,9 +29,11 @@ import AddIcon from '@mui/icons-material/Add'
 import FileDownloadIcon from '@mui/icons-material/FileDownload'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import DeleteIcon from '@mui/icons-material/Delete'
+import PlayArrowIcon from '@mui/icons-material/PlayArrow'
+import SyncIcon from '@mui/icons-material/Sync'
 import { validateSourceConfig } from '@/config/sources'
 import { BookSource } from '@prisma/client'
-import SourceItem from '@/components/SourceItem'
+import Switch from '@mui/material/Switch'
 
 export default function SourcesPage() {
   const [sources, setSources] = useState<BookSource[]>([])
@@ -46,6 +48,8 @@ export default function SourcesPage() {
     severity: 'info',
   })
   const [importing, setImporting] = useState(false)
+  const [testingSource, setTestingSource] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
 
   const fetchSources = useCallback(async () => {
     try {
@@ -145,6 +149,71 @@ export default function SourcesPage() {
     }
   }
 
+  const handleTestSource = async (id: string) => {
+    setTestingSource(id)
+    try {
+      const response = await fetch('/api/sources/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceId: id }),
+      })
+
+      const data = await response.json()
+      if (data.success) {
+        showSnackbar(data.data.message, data.data.available ? 'success' : 'error')
+        // 更新书源状态
+        setSources(sources.map(s => s.id === id ? { ...s, available: data.data.available } : s))
+      } else {
+        showSnackbar('测试失败: ' + data.error, 'error')
+      }
+    } catch {
+      showSnackbar('测试失败', 'error')
+    } finally {
+      setTestingSource(null)
+    }
+  }
+
+  const handleToggleEnabled = async (id: string, enabled: boolean) => {
+    try {
+      const response = await fetch(`/api/sources/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      })
+
+      const data = await response.json()
+      if (data.success) {
+        showSnackbar(enabled ? '书源已启用' : '书源已禁用', 'info')
+        setSources(sources.map(s => s.id === id ? { ...s, enabled } : s))
+      } else {
+        showSnackbar('操作失败: ' + data.error, 'error')
+      }
+    } catch {
+      showSnackbar('操作失败', 'error')
+    }
+  }
+
+  const handleSyncSources = async () => {
+    setSyncing(true)
+    try {
+      const response = await fetch('/api/cron/update-sources', {
+        method: 'POST',
+      })
+
+      const data = await response.json()
+      if (data.success) {
+        showSnackbar(`同步完成：新增 ${data.data.added}，更新 ${data.data.updated}`, 'success')
+        fetchSources()
+      } else {
+        showSnackbar('同步失败: ' + data.error, 'error')
+      }
+    } catch {
+      showSnackbar('同步失败', 'error')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   const handleCopyToClipboard = async () => {
     try {
       await navigator.clipboard.writeText(exportJson)
@@ -172,15 +241,16 @@ export default function SourcesPage() {
   const availableCount = sources.filter(s => s.available).length
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Box sx={{ mb: 4 }}>
-        <Typography variant="h4" gutterBottom sx={{ fontWeight: 'bold' }}>
-          书源管理
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          管理小说搜索的书源配置
-        </Typography>
-      </Box>
+    <Box sx={{ pb: 7 }}>
+      <Container maxWidth="lg" sx={{ py: 4 }}>
+        <Box sx={{ mb: 4 }}>
+          <Typography variant="h4" gutterBottom sx={{ fontWeight: 'bold' }}>
+            书源管理
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            管理小说搜索的书源配置，启用/禁用书源，测试书源可用性
+          </Typography>
+        </Box>
 
       {/* Stats Cards */}
       <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
@@ -218,7 +288,7 @@ export default function SourcesPage() {
         </Paper>
       </Box>
 
-      {/* Action Buttons */}
+      /* Action Buttons */
       <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
         <Button
           variant="contained"
@@ -226,6 +296,14 @@ export default function SourcesPage() {
           onClick={handleImportClick}
         >
           导入书源
+        </Button>
+        <Button
+          variant="outlined"
+          startIcon={<SyncIcon />}
+          onClick={handleSyncSources}
+          disabled={syncing}
+        >
+          {syncing ? '同步中...' : '同步书源'}
         </Button>
         <Button
           variant="outlined"
@@ -244,6 +322,7 @@ export default function SourcesPage() {
               <TableCell>名称</TableCell>
               <TableCell>URL</TableCell>
               <TableCell>类型</TableCell>
+              <TableCell>启用</TableCell>
               <TableCell>状态</TableCell>
               <TableCell>最后更新</TableCell>
               <TableCell align="right">操作</TableCell>
@@ -252,13 +331,13 @@ export default function SourcesPage() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6} align="center">
+                <TableCell colSpan={7} align="center">
                   <CircularProgress size={24} sx={{ my: 2 }} />
                 </TableCell>
               </TableRow>
             ) : sources.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} align="center">
+                <TableCell colSpan={7} align="center">
                   <Typography color="text.secondary" sx={{ py: 4 }}>
                     暂无书源数据
                   </Typography>
@@ -266,11 +345,50 @@ export default function SourcesPage() {
               </TableRow>
             ) : (
               sources.map((source) => (
-                <SourceItem
-                  key={source.id}
-                  source={source}
-                  onDelete={handleDelete}
-                />
+                <TableRow key={source.id}>
+                  <TableCell>{source.name}</TableCell>
+                  <TableCell sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {source.url}
+                  </TableCell>
+                  <TableCell>
+                    <Chip label={source.type} size="small" color={source.type === 'builtin' ? 'primary' : 'secondary'} />
+                  </TableCell>
+                  <TableCell>
+                    <Switch
+                      checked={source.enabled}
+                      onChange={() => handleToggleEnabled(source.id, !source.enabled)}
+                      size="small"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      label={source.available ? '可用' : '不可用'}
+                      size="small"
+                      color={source.available ? 'success' : 'error'}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    {new Date(source.lastUpdated).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell align="right">
+                    <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
+                      <Tooltip title="测试书源">
+                        <IconButton
+                          size="small"
+                          onClick={() => handleTestSource(source.id)}
+                          disabled={testingSource === source.id}
+                        >
+                          {testingSource === source.id ? <CircularProgress size={16} /> : <PlayArrowIcon />}
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="删除">
+                        <IconButton size="small" onClick={() => handleDelete(source.id)} disabled={source.type === 'builtin'}>
+                          <DeleteIcon />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
+                  </TableCell>
+                </TableRow>
               ))
             )}
           </TableBody>
@@ -374,6 +492,7 @@ export default function SourcesPage() {
           {snackbar.message}
         </Alert>
       </Snackbar>
-    </Container>
+      </Container>
+    </Box>
   )
 }

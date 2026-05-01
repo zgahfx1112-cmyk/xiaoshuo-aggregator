@@ -1,14 +1,13 @@
 {
   "tasks": [
     {
-      "id": "58cbf841",
+      "id": "f8bdc099",
       "cron": "*/4 * * * *",
-      "prompt": "Use PowerShell to simulate a harmless keystroke (ScrollLock toggle twice) to prevent Windows 11 screen lock due to company policy. Run: powershell -Command \"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{SCROLLLOCK}'); Start-Sleep -Milliseconds 100; [System.Windows.Forms.SendKeys]::SendWait('{SCROLLLOCK}')\". This keeps the system active without interfering with user work.",
-      "createdAt": 1777636546729,
-      "lastFiredAt": 1777638762168,
+      "prompt": "Use PowerShell to simulate a tiny mouse movement (move 1 pixel right then back) to prevent Windows 11 screen lock. Run: powershell -Command 'Add-Type -AssemblyName System.Windows.Forms; $pos = [System.Windows.Forms.Cursor]::Position; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(($pos.X + 1), $pos.Y); Start-Sleep -Milliseconds 50; [System.Windows.Forms.Cursor]::Position = $pos'. This keeps the system active without interfering with user work.",
+      "createdAt": 1777647629619,
       "recurring": true,
       "createdBySessionId": "c40a4952-2e0b-49b7-ab40-1c4b90fc546f",
-      "createdByPid": 25328
+      "createdByPid": 28264
     }
   ]
 }

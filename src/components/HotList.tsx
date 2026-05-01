@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Box,
   Tabs,
@@ -14,6 +15,7 @@ import {
   Chip,
   Skeleton,
   Container,
+  CardActionArea,
 } from '@mui/material'
 
 interface HotNovel {
@@ -38,86 +40,93 @@ function formatWordCount(count: number): string {
 }
 
 function NovelCard({ novel }: { novel: HotNovel }) {
+  const router = useRouter()
+
+  const handleClick = () => {
+    router.push(`/novel/${novel.id}`)
+  }
+
   return (
-    <Card
-      sx={{
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        cursor: 'pointer',
-        transition: 'transform 0.2s, box-shadow 0.2s',
-        '&:hover': {
-          transform: 'translateY(-4px)',
-          boxShadow: 4,
-        },
-      }}
-    >
-      <Box sx={{ position: 'relative' }}>
-        <CardMedia
-          component="img"
-          sx={{
-            height: 180,
-            objectFit: 'cover',
-            bgcolor: 'grey.200',
-          }}
-          image={novel.cover}
-          alt={novel.title}
-          onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
-            const target = e.target as HTMLImageElement
-            target.style.display = 'none'
-            target.parentElement!.style.backgroundColor = '#e0e0e0'
-          }}
-        />
-        <Chip
-          label={`TOP ${novel.rank}`}
-          size="small"
-          color="primary"
-          sx={{
-            position: 'absolute',
-            top: 8,
-            left: 8,
-            fontWeight: 'bold',
-          }}
-        />
-        <Chip
-          label={novel.status}
-          size="small"
-          color={novel.status === '完结' ? 'success' : 'warning'}
-          sx={{
-            position: 'absolute',
-            top: 8,
-            right: 8,
-          }}
-        />
-      </Box>
-      <CardContent sx={{ flexGrow: 1, pb: 1 }}>
-        <Typography
-          gutterBottom
-          variant="subtitle1"
-          component="div"
-          sx={{
-            fontWeight: 'bold',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {novel.title}
-        </Typography>
-        <Typography variant="body2" color="text.secondary" gutterBottom>
-          {novel.author}
-        </Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-          <Rating value={novel.rating / 2} precision={0.1} readOnly size="small" />
-          <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
-            {novel.rating.toFixed(1)}
-          </Typography>
+    <CardActionArea onClick={handleClick}>
+      <Card
+        sx={{
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          transition: 'transform 0.2s, box-shadow 0.2s',
+          '&:hover': {
+            transform: 'translateY(-4px)',
+            boxShadow: 4,
+          },
+        }}
+      >
+        <Box sx={{ position: 'relative' }}>
+          <CardMedia
+            component="img"
+            sx={{
+              height: 180,
+              objectFit: 'cover',
+              bgcolor: 'grey.200',
+            }}
+            image={novel.cover}
+            alt={novel.title}
+            onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
+              const target = e.target as HTMLImageElement
+              target.style.display = 'none'
+              target.parentElement!.style.backgroundColor = '#e0e0e0'
+            }}
+          />
+          <Chip
+            label={`TOP ${novel.rank}`}
+            size="small"
+            color="primary"
+            sx={{
+              position: 'absolute',
+              top: 8,
+              left: 8,
+              fontWeight: 'bold',
+            }}
+          />
+          <Chip
+            label={novel.status}
+            size="small"
+            color={novel.status === '完结' ? 'success' : 'warning'}
+            sx={{
+              position: 'absolute',
+              top: 8,
+              right: 8,
+            }}
+          />
         </Box>
-        <Typography variant="body2" color="text.secondary">
-          {formatWordCount(novel.wordCount)}
-        </Typography>
-      </CardContent>
-    </Card>
+        <CardContent sx={{ flexGrow: 1, pb: 1 }}>
+          <Typography
+            gutterBottom
+            variant="subtitle1"
+            component="div"
+            sx={{
+              fontWeight: 'bold',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {novel.title}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" gutterBottom>
+            {novel.author}
+          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+            <Rating value={novel.rating / 2} precision={0.1} readOnly size="small" />
+            <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+              {novel.rating.toFixed(1)}
+            </Typography>
+          </Box>
+          <Typography variant="body2" color="text.secondary">
+            {formatWordCount(novel.wordCount)}
+          </Typography>
+        </CardContent>
+      </Card>
+    </CardActionArea>
   )
 }
 

@@ -82,11 +82,13 @@ model BookSource {
   url         String   @db.VarChar(500)
   config      Json     // 书源解析规则配置
   type        String   @db.VarChar(20) // "builtin" | "user"
-  available   Boolean  @default(true)
+  available   Boolean  @default(true)  // 书源验证是否可用
+  enabled     Boolean  @default(true)  // 用户是否启用该书源
   lastUpdated DateTime @default(now())
 
   @@index([type])
   @@index([available])
+  @@index([enabled])
 }
 
 // 系统日志表（定时任务日志）

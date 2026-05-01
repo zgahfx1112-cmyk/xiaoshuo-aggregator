@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { updateBookSources, verifyCronSecret } from '@/lib/sourceUpdater'
+import { syncYckceoSources } from '@/lib/yckceoScraper'
 import { logger } from '@/lib/logger'
 import { applyRateLimit } from '@/lib/rateLimit'
 
@@ -54,13 +55,10 @@ export async function GET(request: NextRequest) {
     }
 
     // Log start
-    await logger.info('update-sources', 'Started scheduled source update')
+    await logger.info('update-sources', 'Started scheduled source update from yckceo.com')
 
-    // Execute update
-    const result = await updateBookSources({
-      enableDeepValidation: false, // Skip deep validation for cron jobs
-      maxSources: 50,
-    })
+    // Execute sync from yckceo.com
+    const result = await syncYckceoSources()
 
     const duration = Date.now() - startTime
 
@@ -70,11 +68,6 @@ export async function GET(request: NextRequest) {
       `Completed: ${result.added} added, ${result.updated} updated, ${result.failed} failed (${duration}ms)`
     )
 
-    // Log errors if any
-    if (result.errors.length > 0) {
-      await logger.warn('update-sources', `Errors: ${result.errors.join('; ')}`)
-    }
-
     return NextResponse.json({
       success: true,
       data: {
@@ -83,7 +76,6 @@ export async function GET(request: NextRequest) {
         updated: result.updated,
         failed: result.failed,
         duration: `${duration}ms`,
-        errors: result.errors.length > 0 ? result.errors : undefined,
       },
     })
   } catch (error) {
@@ -93,6 +85,52 @@ export async function GET(request: NextRequest) {
 
     // Log error with stack trace
     await logger.error('update-sources', `Failed: ${errorMessage} (${duration}ms)${stackTrace ? `\n${stackTrace}` : ''}`)
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: errorMessage,
+        duration: `${duration}ms`,
+      },
+      { status: 500 }
+    )
+  }
+}
+
+/**
+ * POST /api/cron/update-sources
+ * Manual trigger for source update (for testing)
+ */
+export async function POST(request: NextRequest) {
+  const startTime = Date.now()
+
+  try {
+    await logger.info('update-sources', 'Manual trigger: Started source update')
+
+    const result = await syncYckceoSources()
+
+    const duration = Date.now() - startTime
+
+    await logger.info(
+      'update-sources',
+      `Manual trigger completed: ${result.added} added, ${result.updated} updated (${duration}ms)`
+    )
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        total: result.total,
+        added: result.added,
+        updated: result.updated,
+        failed: result.failed,
+        duration: `${duration}ms`,
+      },
+    })
+  } catch (error) {
+    const duration = Date.now() - startTime
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+
+    await logger.error('update-sources', `Manual trigger failed: ${errorMessage} (${duration}ms)`)
 
     return NextResponse.json(
       {
