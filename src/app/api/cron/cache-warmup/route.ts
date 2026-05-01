@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { warmupCache } from '@/lib/cacheService'
-import { verifyCronSecret } from '@/lib/sourceUpdater'
+import { verifyCronSecret } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
 /**

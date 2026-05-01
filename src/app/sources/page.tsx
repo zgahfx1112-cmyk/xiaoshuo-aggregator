@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import {
   Box,
   Typography,
@@ -24,31 +24,18 @@ import {
   CircularProgress,
   Chip,
   Container,
-  Divider,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import FileDownloadIcon from '@mui/icons-material/FileDownload'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import DeleteIcon from '@mui/icons-material/Delete'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
-import SyncIcon from '@mui/icons-material/Sync'
 import Switch from '@mui/material/Switch'
 import { useBookshelf, UserSourceConfig } from '@/hooks/useBookshelf'
-
-interface ServerSource {
-  id: string
-  name: string
-  url: string
-  type: string
-  available: boolean
-  lastUpdated: string
-}
 
 export default function SourcesPage() {
   const { userSourceConfigs, setUserSourceEnabled, addUserSource, removeUserSource } = useBookshelf()
 
-  const [serverSources, setServerSources] = useState<ServerSource[]>([])
-  const [loading, setLoading] = useState(true)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   const [importJson, setImportJson] = useState('')
@@ -60,27 +47,6 @@ export default function SourcesPage() {
   })
   const [importing, setImporting] = useState(false)
   const [testingSource, setTestingSource] = useState<string | null>(null)
-  const [syncing, setSyncing] = useState(false)
-
-  const fetchServerSources = useCallback(async () => {
-    try {
-      const response = await fetch('/api/sources')
-      const data = await response.json()
-      if (data.success) {
-        setServerSources(data.data)
-      } else {
-        showSnackbar('加载预设书源失败: ' + data.error, 'error')
-      }
-    } catch {
-      showSnackbar('加载预设书源失败', 'error')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchServerSources()
-  }, [fetchServerSources])
 
   const showSnackbar = (message: string, severity: 'success' | 'error' | 'info') => {
     setSnackbar({ open: true, message, severity })
@@ -90,10 +56,9 @@ export default function SourcesPage() {
     setSnackbar({ ...snackbar, open: false })
   }
 
-  // 检查书源是否启用（从本地配置读取）
+  // 检查书源是否启用
   const isSourceEnabled = (sourceId: string) => {
     const config = userSourceConfigs.find(s => s.sourceId === sourceId)
-    // 默认启用（如果本地没有记录）
     return config ? config.enabled : true
   }
 
@@ -104,7 +69,7 @@ export default function SourcesPage() {
     showSnackbar(!currentEnabled ? `已启用 ${sourceName}` : `已禁用 ${sourceName}`, 'info')
   }
 
-  // 导入自定义书源（存入本地）
+  // 导入书源（支持 yckceo.com JSON 格式）
   const handleImport = async () => {
     if (!importJson.trim()) {
       showSnackbar('请输入书源配置或URL', 'error')
@@ -141,11 +106,14 @@ export default function SourcesPage() {
     }
   }
 
-  const importConfigs = (configs: Array<{ bookSourceName?: string; name?: string; bookSourceUrl?: string; url?: string } & object>) => {
+  // 处理 yckceo.com 书源格式
+  const importConfigs = (configs: Array<Record<string, unknown>>) => {
     let added = 0
     for (const config of configs) {
-      const name = config.bookSourceName || config.name
-      const url = config.bookSourceUrl || config.url
+      // 支持 yckceo 格式：bookSourceName, bookSourceUrl
+      // 和标准格式：name, url
+      const name = (config.bookSourceName || config.name) as string | undefined
+      const url = (config.bookSourceUrl || config.url) as string | undefined
 
       if (!name || !url) continue
 
@@ -156,7 +124,7 @@ export default function SourcesPage() {
         sourceName: name,
         enabled: true,
         isCustom: true,
-        config: config as object,
+        config: config,
       })
       added++
     }
@@ -171,13 +139,13 @@ export default function SourcesPage() {
   }
 
   // 测试书源可用性
-  const handleTestSource = async (sourceId: string) => {
-    setTestingSource(sourceId)
+  const handleTestSource = async (source: UserSourceConfig) => {
+    setTestingSource(source.sourceId)
     try {
       const response = await fetch('/api/sources/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceId }),
+        body: JSON.stringify({ sourceConfig: source.config }),
       })
 
       const data = await response.json()
@@ -190,25 +158,6 @@ export default function SourcesPage() {
       showSnackbar('测试失败', 'error')
     } finally {
       setTestingSource(null)
-    }
-  }
-
-  // 同步服务端书源更新
-  const handleSyncSources = async () => {
-    setSyncing(true)
-    try {
-      const response = await fetch('/api/cron/update-sources', { method: 'POST' })
-      const data = await response.json()
-      if (data.success) {
-        showSnackbar(`同步完成：新增 ${data.data.added}，更新 ${data.data.updated}`, 'success')
-        fetchServerSources()
-      } else {
-        showSnackbar('同步失败: ' + data.error, 'error')
-      }
-    } catch {
-      showSnackbar('同步失败', 'error')
-    } finally {
-      setSyncing(false)
     }
   }
 
@@ -229,8 +178,8 @@ export default function SourcesPage() {
     }
   }
 
-  // 统计数据
-  const enabledCount = serverSources.filter(s => isSourceEnabled(s.id)).length + userSourceConfigs.filter(s => s.enabled).length
+  // 统计
+  const enabledCount = userSourceConfigs.filter(s => s.enabled && s.isCustom).length
   const customCount = userSourceConfigs.filter(s => s.isCustom).length
 
   return (
@@ -240,22 +189,18 @@ export default function SourcesPage() {
           书源管理
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          服务端预设书源 + 用户自定义书源，配置存储在本地
+          导入书源配置，数据存储在本地浏览器。支持 yckceo.com 书源JSON格式。
         </Typography>
 
         {/* 统计 */}
-        <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
           <Paper sx={{ p: 1.5, minWidth: 100 }}>
             <Typography variant="body2" color="text.secondary">已启用</Typography>
             <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'success.main' }}>{enabledCount}</Typography>
           </Paper>
           <Paper sx={{ p: 1.5, minWidth: 100 }}>
-            <Typography variant="body2" color="text.secondary">自定义</Typography>
-            <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'secondary.main' }}>{customCount}</Typography>
-          </Paper>
-          <Paper sx={{ p: 1.5, minWidth: 100 }}>
-            <Typography variant="body2" color="text.secondary">预设书源</Typography>
-            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>{serverSources.length}</Typography>
+            <Typography variant="body2" color="text.secondary">总数</Typography>
+            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>{customCount}</Typography>
           </Paper>
         </Box>
 
@@ -264,17 +209,13 @@ export default function SourcesPage() {
           <Button variant="contained" startIcon={<AddIcon />} onClick={() => setImportDialogOpen(true)}>
             导入书源
           </Button>
-          <Button variant="outlined" startIcon={<SyncIcon />} onClick={handleSyncSources} disabled={syncing}>
-            {syncing ? '同步中...' : '同步预设'}
-          </Button>
           <Button variant="outlined" startIcon={<FileDownloadIcon />} onClick={handleExportClick}>
-            导出自定义
+            导出书源
           </Button>
         </Box>
 
-        {/* 服务端预设书源 */}
-        <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 'bold' }}>服务端预设书源</Typography>
-        <TableContainer component={Paper} sx={{ mb: 3 }}>
+        {/* 用户书源列表 */}
+        <TableContainer component={Paper}>
           <Table size="small">
             <TableHead>
               <TableRow>
@@ -285,57 +226,14 @@ export default function SourcesPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {loading ? (
-                <TableRow>
-                  <TableCell colSpan={4} align="center"><CircularProgress size={20} /></TableCell>
-                </TableRow>
-              ) : serverSources.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4} align="center"><Typography color="text.secondary">暂无预设书源</Typography></TableCell>
-                </TableRow>
-              ) : (
-                serverSources.map(source => (
-                  <TableRow key={source.id}>
-                    <TableCell>{source.name}</TableCell>
-                    <TableCell>
-                      <Switch
-                        checked={isSourceEnabled(source.id)}
-                        onChange={() => handleToggleEnabled(source.id, source.name)}
-                        size="small"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Chip label={source.available ? '可用' : '不可用'} size="small" color={source.available ? 'success' : 'error'} />
-                    </TableCell>
-                    <TableCell>
-                      <Tooltip title="测试">
-                        <IconButton size="small" onClick={() => handleTestSource(source.id)} disabled={testingSource === source.id}>
-                          {testingSource === source.id ? <CircularProgress size={16} /> : <PlayArrowIcon />}
-                        </IconButton>
-                      </Tooltip>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-
-        {/* 用户自定义书源 */}
-        <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 'bold' }}>用户自定义书源</Typography>
-        <TableContainer component={Paper}>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>名称</TableCell>
-                <TableCell>启用</TableCell>
-                <TableCell>操作</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
               {userSourceConfigs.filter(s => s.isCustom).length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={3} align="center"><Typography color="text.secondary">暂无自定义书源，点击导入添加</Typography></TableCell>
+                  <TableCell colSpan={4} align="center">
+                    <Typography color="text.secondary">暂无书源，点击"导入书源"添加</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                      支持导入 yckceo.com 书源JSON格式
+                    </Typography>
+                  </TableCell>
                 </TableRow>
               ) : (
                 userSourceConfigs.filter(s => s.isCustom).map(source => (
@@ -349,6 +247,14 @@ export default function SourcesPage() {
                       />
                     </TableCell>
                     <TableCell>
+                      <Chip label="自定义" size="small" color="primary" variant="outlined" />
+                    </TableCell>
+                    <TableCell>
+                      <Tooltip title="测试">
+                        <IconButton size="small" onClick={() => handleTestSource(source)} disabled={testingSource === source.sourceId}>
+                          {testingSource === source.sourceId ? <CircularProgress size={16} /> : <PlayArrowIcon />}
+                        </IconButton>
+                      </Tooltip>
                       <Tooltip title="删除">
                         <IconButton size="small" onClick={() => removeUserSource(source.sourceId)}>
                           <DeleteIcon />
@@ -367,7 +273,7 @@ export default function SourcesPage() {
           <DialogTitle>导入书源</DialogTitle>
           <DialogContent>
             <Alert severity="info" sx={{ mb: 2 }}>
-              支持书源JSON配置、JSON文件URL链接。导入的书源保存在本地浏览器。
+              支持书源JSON配置或JSON文件URL链接。兼容 yckceo.com/yuedu/shuyuans 格式。
             </Alert>
             <TextField
               fullWidth
@@ -375,7 +281,7 @@ export default function SourcesPage() {
               rows={10}
               value={importJson}
               onChange={(e) => setImportJson(e.target.value)}
-              placeholder='粘贴书源JSON配置，或输入书源JSON文件URL（如：https://xxx.com/sources.json）'
+              placeholder='粘贴书源JSON配置，或输入书源JSON文件URL（如：https://www.yckceo.com/yuedu/shuyuans/json/id/1107.json）'
               sx={{ fontFamily: 'monospace' }}
             />
           </DialogContent>
@@ -389,7 +295,7 @@ export default function SourcesPage() {
 
         {/* 导出对话框 */}
         <Dialog open={exportDialogOpen} onClose={() => setExportDialogOpen(false)} maxWidth="md" fullWidth>
-          <DialogTitle>导出自定义书源</DialogTitle>
+          <DialogTitle>导出书源</DialogTitle>
           <DialogContent>
             <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
               <Button variant="outlined" size="small" startIcon={<ContentCopyIcon />} onClick={handleCopyToClipboard}>

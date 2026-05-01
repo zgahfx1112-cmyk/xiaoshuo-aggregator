@@ -1,48 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
 import { SourceParser, SourceConfigInput } from '@/lib/sourceParser'
+import { applyRateLimit } from '@/lib/rateLimit'
 
 export async function POST(request: NextRequest) {
-  try {
-    const { sourceId } = await request.json()
+  // Apply rate limiting
+  const rateLimitResponse = await applyRateLimit(request)
+  if (rateLimitResponse) {
+    return rateLimitResponse
+  }
 
-    if (!sourceId) {
+  try {
+    const { sourceConfig } = await request.json()
+
+    if (!sourceConfig) {
       return NextResponse.json({
         success: false,
-        error: 'sourceId is required',
+        error: 'sourceConfig is required',
       }, { status: 400 })
     }
 
-    const source = await prisma.bookSource.findUnique({
-      where: { id: sourceId },
-    })
-
-    if (!source) {
-      return NextResponse.json({
-        success: false,
-        error: 'Source not found',
-      }, { status: 404 })
-    }
-
-    // Parse config
-    const config = typeof source.config === 'string'
-      ? JSON.parse(source.config)
-      : source.config
-
     // Test with common search term
-    const parser = new SourceParser(config as SourceConfigInput)
+    const parser = new SourceParser(sourceConfig as SourceConfigInput)
     const results = await parser.parseSearch('斗罗大陆')
 
     const isAvailable = results.length > 0
-
-    // Update available status
-    await prisma.bookSource.update({
-      where: { id: sourceId },
-      data: {
-        available: isAvailable,
-        lastUpdated: new Date(),
-      },
-    })
 
     return NextResponse.json({
       success: true,

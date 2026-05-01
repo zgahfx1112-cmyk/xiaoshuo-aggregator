@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { queryLogs, getLogStats } from '@/lib/logger'
-import { verifyCronSecret } from '@/lib/sourceUpdater'
+import { verifyCronSecret } from '@/lib/auth'
 
 /**
  * GET /api/logs

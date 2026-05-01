@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cacheGet, cacheSet, CacheKeys, CacheTTL } from '@/lib/redis'
-import { prisma } from '@/lib/prisma'
 import { SourceParser, SourceConfigInput } from '@/lib/sourceParser'
-import { BUILTIN_SOURCES } from '@/config/sources'
 import { SearchResult } from '@/lib/types'
 import { applyRateLimit } from '@/lib/rateLimit'
 
@@ -46,8 +44,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<SearchApiR
   const searchParams = request.nextUrl.searchParams
   const query = searchParams.get('query')
   const page = parseInt(searchParams.get('page') || '1', 10)
-  // 从请求头获取用户启用的书源ID和自定义书源
-  const enabledSourceIds = searchParams.get('enabledSources')?.split(',').filter(Boolean) || null
   const customSourcesJson = searchParams.get('customSources')
 
   if (!query || query.trim().length === 0) {
@@ -72,39 +68,24 @@ export async function GET(request: NextRequest): Promise<NextResponse<SearchApiR
       })
     }
 
-    // Get all book sources from database
-    const dbSources = await prisma.bookSource.findMany({
-      where: { available: true },
-      select: { id: true, name: true, config: true },
-    })
-
-    // 确定要使用的书源
+    // Get sources from client request
     let sourcesToUse: Array<{ id: string; name: string; config: object }> = []
 
-    if (enabledSourceIds && enabledSourceIds.length > 0) {
-      // 用户指定了启用的书源，只使用这些
-      sourcesToUse = dbSources.filter(s => enabledSourceIds.includes(s.id))
-        .map(s => ({ id: s.id, name: s.name, config: s.config as object }))
-    } else {
-      // 没有指定，使用所有可用书源（默认行为）
-      sourcesToUse = dbSources.map(s => ({ id: s.id, name: s.name, config: s.config as object }))
-    }
-
-    // 添加内置书源
-    sourcesToUse.push(
-      ...BUILTIN_SOURCES.map(s => ({ id: s.name, name: s.name, config: s }))
-    )
-
-    // 添加用户自定义书源
     if (customSourcesJson) {
       try {
         const customSources: CustomSourceConfig[] = JSON.parse(customSourcesJson)
-        sourcesToUse.push(
-          ...customSources.map(s => ({ id: s.sourceId, name: s.sourceName, config: s.config }))
-        )
+        sourcesToUse = customSources.map(s => ({ id: s.sourceId, name: s.sourceName, config: s.config }))
       } catch {
         // Ignore invalid custom sources
       }
+    }
+
+    if (sourcesToUse.length === 0) {
+      return NextResponse.json({
+        success: false,
+        data: { novels: [], total: 0, page: 1 },
+        error: 'No book sources configured. Please import sources first.',
+      }, { status: 400 })
     }
 
     // Search all sources concurrently

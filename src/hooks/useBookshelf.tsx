@@ -19,7 +19,7 @@ export interface UserSourceConfig {
   sourceName: string
   enabled: boolean
   isCustom: boolean // 是否用户自己导入的书源
-  config?: object // 用户导入的书源完整配置
+  config?: object // 书源完整配置
 }
 
 interface BookshelfState {
@@ -42,7 +42,6 @@ interface BookshelfContextType {
   setUserSourceEnabled: (sourceId: string, enabled: boolean) => void
   addUserSource: (config: UserSourceConfig) => void
   removeUserSource: (sourceId: string) => void
-  getEnabledSourceIds: () => string[]
   getEnabledCustomSources: () => UserSourceConfig[]
 }
 
@@ -154,14 +153,9 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
 
   // 用户书源配置操作
   const setUserSourceEnabled = useCallback((sourceId: string, enabled: boolean) => {
-    setUserSourceConfigs((prev) => {
-      const existing = prev.find((s) => s.sourceId === sourceId)
-      if (existing) {
-        return prev.map((s) => s.sourceId === sourceId ? { ...s, enabled } : s)
-      }
-      // 添加服务端书源的启用状态记录
-      return [...prev, { sourceId, sourceName: '', enabled, isCustom: false }]
-    })
+    setUserSourceConfigs((prev) =>
+      prev.map((s) => s.sourceId === sourceId ? { ...s, enabled } : s)
+    )
   }, [])
 
   const addUserSource = useCallback((config: UserSourceConfig) => {
@@ -174,10 +168,6 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
   const removeUserSource = useCallback((sourceId: string) => {
     setUserSourceConfigs((prev) => prev.filter((s) => s.sourceId !== sourceId))
   }, [])
-
-  const getEnabledSourceIds = useCallback(() => {
-    return userSourceConfigs.filter((s) => s.enabled).map((s) => s.sourceId)
-  }, [userSourceConfigs])
 
   const getEnabledCustomSources = useCallback(() => {
     return userSourceConfigs.filter((s) => s.enabled && s.isCustom && s.config)
@@ -195,7 +185,6 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
       setUserSourceEnabled,
       addUserSource,
       removeUserSource,
-      getEnabledSourceIds,
       getEnabledCustomSources,
     }),
     [
@@ -209,7 +198,6 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
       setUserSourceEnabled,
       addUserSource,
       removeUserSource,
-      getEnabledSourceIds,
       getEnabledCustomSources,
     ]
   )
