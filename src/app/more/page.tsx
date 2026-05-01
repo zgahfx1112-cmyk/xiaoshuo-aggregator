@@ -12,7 +12,6 @@ import {
   ListItemIcon,
   ListItemText,
   Slider,
-  Switch,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -29,7 +28,6 @@ import BugReportIcon from '@mui/icons-material/BugReport'
 
 export default function MorePage() {
   const [fontSize, setFontSize] = useState(16)
-  const [darkMode, setDarkMode] = useState(false)
   const [clearCacheDialog, setClearCacheDialog] = useState(false)
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string }>({
     open: false,
@@ -74,13 +72,6 @@ export default function MorePage() {
                 max={24}
                 step={1}
                 sx={{ width: 150 }}
-              />
-            </ListItem>
-            <ListItem>
-              <ListItemText primary="深色模式" />
-              <Switch
-                checked={darkMode}
-                onChange={(e) => setDarkMode(e.target.checked)}
               />
             </ListItem>
           </List>
@@ -129,7 +120,7 @@ export default function MorePage() {
         <DialogTitle>清除缓存</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            确定要清除所有缓存数据吗？这将清除搜索结果、小说详情等缓存，但不会影响书架数据。
+            定要清除所有缓存数据吗？这将清除搜索结果、小说详情等缓存，但不会影响书架数据。
           </DialogContentText>
         </DialogContent>
         <DialogActions>
