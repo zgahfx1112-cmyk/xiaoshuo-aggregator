@@ -53,9 +53,11 @@ export default function SourcesPage() {
     removeMultipleSources,
     sourceGroups,
     addGroup,
+    addMultipleGroups,
     removeGroup,
     setSourceGroup,
     getSourcesByGroup,
+    getGroupByName,
   } = useBookshelf()
 
   const [importDialogOpen, setImportDialogOpen] = useState(false)
@@ -217,7 +219,26 @@ export default function SourcesPage() {
   }
 
   const importConfigs = (configs: Array<Record<string, unknown>>) => {
-    const groupId = currentTab > 0 ? sourceGroups[currentTab - 1]?.id : undefined
+    const userSelectedGroupId = currentTab > 0 ? sourceGroups[currentTab - 1]?.id : undefined
+
+    // 收集所有分组名称（仅当用户未选择分组时才自动创建）
+    const groupNamesSet = new Set<string>()
+    if (!userSelectedGroupId) {
+      for (const config of configs) {
+        const groupName = (config.bookSourceGroup || config.sourceGroup) as string | undefined
+        if (groupName) {
+          groupNamesSet.add(groupName)
+        }
+      }
+    }
+
+    // 创建不存在的分组
+    const createdGroups: Record<string, string> = {}
+    const groupsToCreate = Array.from(groupNamesSet).filter(name => !getGroupByName(name))
+    if (groupsToCreate.length > 0) {
+      const newGroups = addMultipleGroups(groupsToCreate)
+      newGroups.forEach(g => createdGroups[g.name] = g.id)
+    }
 
     const newSources: UserSourceConfig[] = []
     for (const config of configs) {
@@ -228,19 +249,35 @@ export default function SourcesPage() {
 
       const sourceId = `custom_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 
+      // 获取分组：优先使用用户选择的分组，其次使用书源自带分组
+      let sourceGroupId = userSelectedGroupId
+      if (!sourceGroupId) {
+        const groupName = (config.bookSourceGroup || config.sourceGroup) as string | undefined
+        if (groupName) {
+          // 查找已存在的分组或新创建的分组
+          const existingGroup = getGroupByName(groupName)
+          if (existingGroup) {
+            sourceGroupId = existingGroup.id
+          } else if (createdGroups[groupName]) {
+            sourceGroupId = createdGroups[groupName]
+          }
+        }
+      }
+
       newSources.push({
         sourceId,
         sourceName: name,
         enabled: true,
         isCustom: true,
-        groupId,
+        groupId: sourceGroupId,
         config: config,
       })
     }
 
     if (newSources.length > 0) {
       addMultipleSources(newSources)
-      showSnackbar(`成功导入 ${newSources.length} 个书源`, 'success')
+      const groupMsg = groupsToCreate.length > 0 ? `，自动创建 ${groupsToCreate.length} 个分组` : ''
+      showSnackbar(`成功导入 ${newSources.length} 个书源${groupMsg}`, 'success')
       setImportDialogOpen(false)
       setImportJson('')
     } else {

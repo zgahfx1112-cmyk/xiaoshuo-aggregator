@@ -56,10 +56,12 @@ interface BookshelfContextType {
   getEnabledCustomSources: () => UserSourceConfig[]
   // 分组管理
   sourceGroups: SourceGroup[]
-  addGroup: (name: string) => void
+  addGroup: (name: string) => string // 返回分组ID
+  addMultipleGroups: (names: string[]) => SourceGroup[] // 批量创建分组
   removeGroup: (id: string) => void
   setSourceGroup: (sourceId: string, groupId: string | undefined) => void
   getSourcesByGroup: (groupId: string) => UserSourceConfig[]
+  getGroupByName: (name: string) => SourceGroup | undefined
 }
 
 const BOOKSHELF_STORAGE_KEY = 'xiaoshuo_bookshelf'
@@ -205,13 +207,25 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
   }, [userSourceConfigs])
 
   // 分组管理
-  const addGroup = useCallback((name: string) => {
+  const addGroup = useCallback((name: string): string => {
+    const id = `group_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
     const newGroup: SourceGroup = {
-      id: `group_${Date.now()}`,
+      id,
       name,
       createdAt: new Date().toISOString(),
     }
     setSourceGroups((prev) => [...prev, newGroup])
+    return id
+  }, [])
+
+  const addMultipleGroups = useCallback((names: string[]): SourceGroup[] => {
+    const newGroups: SourceGroup[] = names.map(name => ({
+      id: `group_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name,
+      createdAt: new Date().toISOString(),
+    }))
+    setSourceGroups((prev) => [...prev, ...newGroups])
+    return newGroups
   }, [])
 
   const removeGroup = useCallback((id: string) => {
@@ -232,6 +246,10 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
     return userSourceConfigs.filter((s) => s.groupId === groupId)
   }, [userSourceConfigs])
 
+  const getGroupByName = useCallback((name: string) => {
+    return sourceGroups.find(g => g.name === name)
+  }, [sourceGroups])
+
   const value = useMemo(
     () => ({
       bookshelf,
@@ -249,9 +267,11 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
       getEnabledCustomSources,
       sourceGroups,
       addGroup,
+      addMultipleGroups,
       removeGroup,
       setSourceGroup,
       getSourcesByGroup,
+      getGroupByName,
     }),
     [
       bookshelf,
@@ -269,9 +289,11 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
       getEnabledCustomSources,
       sourceGroups,
       addGroup,
+      addMultipleGroups,
       removeGroup,
       setSourceGroup,
       getSourcesByGroup,
+      getGroupByName,
     ]
   )
 

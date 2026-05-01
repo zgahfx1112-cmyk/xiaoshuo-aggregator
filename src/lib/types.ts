@@ -112,6 +112,7 @@ export interface SearchResult {
   cover: string
   bookUrl: string
   sourceName: string
+  sourceId?: string
 }
 
 // Source Validation Types

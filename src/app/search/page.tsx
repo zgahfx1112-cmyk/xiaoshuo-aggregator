@@ -18,6 +18,8 @@ import {
   CardMedia,
   CardActionArea,
   Chip,
+  Tabs,
+  Tab,
 } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
 import Link from 'next/link'
@@ -28,6 +30,13 @@ interface SearchResult {
   cover: string
   bookUrl: string
   sourceName: string
+  sourceId?: string
+}
+
+interface SourceStat {
+  id: string
+  name: string
+  resultCount: number
 }
 
 function SearchResultsContent() {
@@ -41,6 +50,8 @@ function SearchResultsContent() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState(query)
+  const [sourceStats, setSourceStats] = useState<SourceStat[]>([])
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
 
   useEffect(() => {
     if (query.trim()) {
@@ -51,6 +62,7 @@ function SearchResultsContent() {
   const performSearch = async (q: string, p: number, sources: string) => {
     setLoading(true)
     setError(null)
+    setSelectedSourceId(null)
 
     try {
       const searchUrl = new URL('/api/search', window.location.origin)
@@ -66,6 +78,7 @@ function SearchResultsContent() {
       if (data.success) {
         setResults(data.data.novels)
         setTotal(data.data.total)
+        setSourceStats(data.data.sources || [])
       } else {
         setError(data.error || '搜索失败')
       }
@@ -76,6 +89,14 @@ function SearchResultsContent() {
     }
   }
 
+  // Filter results by selected source
+  const filteredResults = selectedSourceId
+    ? results.filter(r => r.sourceId === selectedSourceId)
+    : results
+
+  const displayResults = filteredResults
+  const displayTotal = filteredResults.length
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
     if (searchQuery.trim()) {
@@ -85,8 +106,6 @@ function SearchResultsContent() {
       window.location.href = `/search?${params.toString()}`
     }
   }
-
-  const totalPages = Math.ceil(total / 20)
 
   const buildPageUrl = (pageNum: number) => {
     const params = new URLSearchParams()
@@ -148,13 +167,35 @@ function SearchResultsContent() {
         {/* 搜索结果 */}
         {!loading && !error && results.length > 0 && (
           <>
+            {/* 书源统计tabs */}
+            {sourceStats.length > 1 && (
+              <Box sx={{ mb: 2 }}>
+                <Tabs
+                  value={selectedSourceId || 'all'}
+                  onChange={(_, newValue) => setSelectedSourceId(newValue === 'all' ? null : newValue)}
+                  variant="scrollable"
+                  scrollButtons="auto"
+                >
+                  <Tab value="all" label={`全部 (${total})`} />
+                  {sourceStats.map(stat => (
+                    <Tab
+                      key={stat.id}
+                      value={stat.id}
+                      label={`${stat.name} (${stat.resultCount})`}
+                      disabled={stat.resultCount === 0}
+                    />
+                  ))}
+                </Tabs>
+              </Box>
+            )}
+
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              找到 {total} 条结果 for "{query}"
+              找到 {displayTotal} 条结果 {selectedSourceId ? `(来自 ${sourceStats.find(s => s.id === selectedSourceId)?.name})` : ''} for "{query}"
             </Typography>
 
             <Grid container spacing={2}>
-              {results.map((novel, index) => (
-                <Grid key={`${novel.title}-${index}`} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}>
+              {displayResults.map((novel, index) => (
+                <Grid key={`${novel.title}-${novel.sourceId}-${index}`} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}>
                   <Card sx={{ height: '100%' }}>
                     <CardActionArea
                       component={Link}
@@ -183,7 +224,7 @@ function SearchResultsContent() {
             </Grid>
 
             {/* 分页 */}
-            {totalPages > 1 && (
+            {Math.ceil(displayTotal / 20) > 1 && (
               <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1, mt: 3 }}>
                 {page > 1 && (
                   <Link href={buildPageUrl(page - 1)} passHref legacyBehavior>
@@ -192,10 +233,10 @@ function SearchResultsContent() {
                 )}
 
                 <Typography sx={{ py: 1 }}>
-                  第 {page} / {totalPages} 页
+                  第 {page} / {Math.ceil(displayTotal / 20)} 页
                 </Typography>
 
-                {page < totalPages && (
+                {page < Math.ceil(displayTotal / 20) && (
                   <Link href={buildPageUrl(page + 1)} passHref legacyBehavior>
                     <Paper sx={{ px: 2, py: 1, cursor: 'pointer' }}>下一页</Paper>
                   </Link>
