@@ -13,10 +13,30 @@ export function getRedisClient(): Redis {
   return redisClient
 }
 
+// Cache statistics key prefix
+const CACHE_STATS_PREFIX = 'cache_stats:'
+
+// Track cache hit/miss
+async function recordCacheStat(key: string, hit: boolean): Promise<void> {
+  try {
+    const client = getRedisClient()
+    const statsKey = `${CACHE_STATS_PREFIX}${key}`
+    if (hit) {
+      await client.hincrby(statsKey, 'hits', 1)
+    } else {
+      await client.hincrby(statsKey, 'misses', 1)
+    }
+    await client.hset(statsKey, { lastAccess: new Date().toISOString() })
+  } catch (error) {
+    // Silently fail stats recording to not affect main operations
+  }
+}
+
 // Cache operations
 export async function cacheGet<T>(key: string): Promise<T | null> {
   const client = getRedisClient()
   const value = await client.get<T>(key)
+  await recordCacheStat(key, value !== null)
   return value
 }
 
