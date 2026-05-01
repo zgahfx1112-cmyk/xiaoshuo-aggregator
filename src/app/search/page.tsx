@@ -3,7 +3,7 @@ import { Suspense } from 'react'
 export const dynamic = 'force-dynamic'
 
 interface SearchPageProps {
-  searchParams: Promise<{ query?: string; page?: string }>
+  searchParams: Promise<{ query?: string; page?: string; customSources?: string }>
 }
 
 export default function SearchPage({ searchParams }: SearchPageProps) {
@@ -43,6 +43,7 @@ async function SearchResultsHandler({ searchParams }: SearchPageProps) {
   const params = await searchParams
   const query = params.query || ''
   const page = parseInt(params.page || '1', 10)
+  const customSources = params.customSources || ''
 
   let searchResults = { novels: [], total: 0, page: 1 }
   let error = null
@@ -50,10 +51,14 @@ async function SearchResultsHandler({ searchParams }: SearchPageProps) {
   if (query.trim().length > 0) {
     try {
       const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
-      const response = await fetch(
-        `${baseUrl}/api/search?query=${encodeURIComponent(query)}&page=${page}`,
-        { cache: 'no-store' }
-      )
+      const searchUrl = new URL(`${baseUrl}/api/search`)
+      searchUrl.searchParams.set('query', query)
+      searchUrl.searchParams.set('page', String(page))
+      if (customSources) {
+        searchUrl.searchParams.set('customSources', customSources)
+      }
+
+      const response = await fetch(searchUrl.toString(), { cache: 'no-store' })
       const data = await response.json()
       if (data.success) {
         searchResults = data.data
@@ -65,7 +70,7 @@ async function SearchResultsHandler({ searchParams }: SearchPageProps) {
     }
   }
 
-  return <SearchResultsView query={query} results={searchResults} error={error} />
+  return <SearchResultsView query={query} results={searchResults} error={error} customSources={customSources} />
 }
 
 interface SearchResults {
@@ -80,20 +85,33 @@ interface SearchResults {
   page: number
 }
 
-function SearchResultsView({
-  query,
-  results,
-  error
-}: {
+interface SearchResultsViewProps {
   query: string
   results: SearchResults
   error: string | null
-}) {
+  customSources?: string
+}
+
+function SearchResultsView({
+  query,
+  results,
+  error,
+  customSources
+}: SearchResultsViewProps) {
   const page = results.page || 1
   const totalPages = Math.ceil(results.total / 20)
 
+  // 构建分页URL，保留customSources参数
+  const buildPageUrl = (pageNum: number) => {
+    const params = new URLSearchParams()
+    params.set('query', query)
+    params.set('page', String(pageNum))
+    if (customSources) params.set('customSources', customSources)
+    return `/search?${params.toString()}`
+  }
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 pb-16">
       <div className="container mx-auto px-4 py-8">
         {/* Search Bar */}
         <div className="flex justify-center mb-8">
@@ -103,14 +121,14 @@ function SearchResultsView({
                 type="text"
                 name="query"
                 defaultValue={query}
-                placeholder="Search novels by title or author..."
+                placeholder="搜索小说..."
                 className="flex-1 px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <button
                 type="submit"
                 className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
               >
-                Search
+                搜索
               </button>
             </div>
           </form>
@@ -194,10 +212,10 @@ function SearchResultsView({
               <div className="flex justify-center mt-8 gap-2">
                 {page > 1 && (
                   <a
-                    href={`/search?query=${encodeURIComponent(query)}&page=${page - 1}`}
+                    href={buildPageUrl(page - 1)}
                     className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                   >
-                    Previous
+                    上一页
                   </a>
                 )}
 
@@ -217,7 +235,7 @@ function SearchResultsView({
                     return (
                       <a
                         key={pageNum}
-                        href={`/search?query=${encodeURIComponent(query)}&page=${pageNum}`}
+                        href={buildPageUrl(pageNum)}
                         className={`px-4 py-2 rounded-lg transition-colors ${
                           pageNum === page
                             ? 'bg-blue-600 text-white'
@@ -232,10 +250,10 @@ function SearchResultsView({
 
                 {page < totalPages && (
                   <a
-                    href={`/search?query=${encodeURIComponent(query)}&page=${page + 1}`}
+                    href={buildPageUrl(page + 1)}
                     className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                   >
-                    Next
+                    下一页
                   </a>
                 )}
               </div>

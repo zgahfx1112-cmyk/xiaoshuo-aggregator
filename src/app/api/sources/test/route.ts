@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { SourceParser } from '@/lib/sourceParser'
+import { SourceParser, SourceConfigInput } from '@/lib/sourceParser'
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
       : source.config
 
     // Test with common search term
-    const parser = new SourceParser(config)
+    const parser = new SourceParser(config as SourceConfigInput)
     const results = await parser.parseSearch('斗罗大陆')
 
     const isAvailable = results.length > 0

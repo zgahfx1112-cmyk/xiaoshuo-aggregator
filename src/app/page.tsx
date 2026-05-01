@@ -20,12 +20,28 @@ import BookshelfItemComponent from '@/components/BookshelfItem'
 export default function Home() {
   const router = useRouter()
   const [searchQuery, setSearchQuery] = useState('')
-  const { bookshelf, removeFromBookshelf } = useBookshelf()
+  const { bookshelf, removeFromBookshelf, getEnabledSourceIds, getEnabledCustomSources } = useBookshelf()
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
     if (searchQuery.trim()) {
-      router.push(`/search?query=${encodeURIComponent(searchQuery.trim())}`)
+      // 构建搜索URL，包含用户启用的书源配置
+      const enabledIds = getEnabledSourceIds()
+      const customSources = getEnabledCustomSources()
+
+      const params = new URLSearchParams()
+      params.set('query', searchQuery.trim())
+
+      // 如果有用户自定义书源，传递给搜索API
+      if (customSources.length > 0) {
+        params.set('customSources', JSON.stringify(customSources.map(s => ({
+          sourceId: s.sourceId,
+          sourceName: s.sourceName,
+          config: s.config
+        }))))
+      }
+
+      router.push(`/search?${params.toString()}`)
     }
   }
 

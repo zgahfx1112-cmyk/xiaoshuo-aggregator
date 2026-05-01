@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cacheGet, cacheSet, CacheKeys, CacheTTL } from '@/lib/redis'
 import { prisma } from '@/lib/prisma'
-import { SourceParser } from '@/lib/sourceParser'
+import { SourceParser, SourceConfigInput } from '@/lib/sourceParser'
 import { BUILTIN_SOURCES } from '@/config/sources'
 import { SearchResult } from '@/lib/types'
 import { applyRateLimit } from '@/lib/rateLimit'
@@ -16,6 +16,12 @@ interface SearchApiResponse {
   error?: string
 }
 
+interface CustomSourceConfig {
+  sourceId: string
+  sourceName: string
+  config: object
+}
+
 // Deduplicate search results by title + author
 function deduplicateResults(results: SearchResult[]): SearchResult[] {
   const seen = new Map<string, SearchResult>()
@@ -24,12 +30,6 @@ function deduplicateResults(results: SearchResult[]): SearchResult[] {
     const key = `${result.title.toLowerCase()}-${result.author.toLowerCase()}`
     if (!seen.has(key)) {
       seen.set(key, result)
-    } else {
-      // Merge sources for the same novel
-      const existing = seen.get(key)!
-      if (existing.sourceName !== result.sourceName) {
-        // Keep the first one, but we could merge source info here if needed
-      }
     }
   }
 
@@ -46,6 +46,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<SearchApiR
   const searchParams = request.nextUrl.searchParams
   const query = searchParams.get('query')
   const page = parseInt(searchParams.get('page') || '1', 10)
+  // 从请求头获取用户启用的书源ID和自定义书源
+  const enabledSourceIds = searchParams.get('enabledSources')?.split(',').filter(Boolean) || null
+  const customSourcesJson = searchParams.get('customSources')
 
   if (!query || query.trim().length === 0) {
     return NextResponse.json({
@@ -69,37 +72,48 @@ export async function GET(request: NextRequest): Promise<NextResponse<SearchApiR
       })
     }
 
-    // Get all enabled book sources from database
+    // Get all book sources from database
     const dbSources = await prisma.bookSource.findMany({
-      where: { available: true, enabled: true },
-      select: { name: true, config: true },
+      where: { available: true },
+      select: { id: true, name: true, config: true },
     })
 
-    // Combine builtin sources with database sources
-    const allSources = [...BUILTIN_SOURCES]
+    // 确定要使用的书源
+    let sourcesToUse: Array<{ id: string; name: string; config: object }> = []
 
-    // Add database sources (parse their config)
-    for (const dbSource of dbSources) {
-      if (dbSource.config) {
-        try {
-          const config = typeof dbSource.config === 'string'
-            ? JSON.parse(dbSource.config)
-            : dbSource.config
-          allSources.push(config)
-        } catch {
-          // Skip invalid config
-        }
+    if (enabledSourceIds && enabledSourceIds.length > 0) {
+      // 用户指定了启用的书源，只使用这些
+      sourcesToUse = dbSources.filter(s => enabledSourceIds.includes(s.id))
+        .map(s => ({ id: s.id, name: s.name, config: s.config as object }))
+    } else {
+      // 没有指定，使用所有可用书源（默认行为）
+      sourcesToUse = dbSources.map(s => ({ id: s.id, name: s.name, config: s.config as object }))
+    }
+
+    // 添加内置书源
+    sourcesToUse.push(
+      ...BUILTIN_SOURCES.map(s => ({ id: s.name, name: s.name, config: s }))
+    )
+
+    // 添加用户自定义书源
+    if (customSourcesJson) {
+      try {
+        const customSources: CustomSourceConfig[] = JSON.parse(customSourcesJson)
+        sourcesToUse.push(
+          ...customSources.map(s => ({ id: s.sourceId, name: s.sourceName, config: s.config }))
+        )
+      } catch {
+        // Ignore invalid custom sources
       }
     }
 
     // Search all sources concurrently
-    const searchPromises = allSources.map(async (source) => {
+    const searchPromises = sourcesToUse.map(async (source) => {
       try {
-        const parser = new SourceParser(source)
+        const parser = new SourceParser(source.config as SourceConfigInput)
         const results = await parser.parseSearch(query)
-        return results
+        return results.map(r => ({ ...r, sourceName: source.name }))
       } catch {
-        // Return empty array on error, don't fail entire search
         return []
       }
     })
@@ -110,20 +124,17 @@ export async function GET(request: NextRequest): Promise<NextResponse<SearchApiR
     const allResults = searchResults.flat()
     const dedupedResults = deduplicateResults(allResults)
 
-    // Sort by relevance (exact title match first, then partial matches)
+    // Sort by relevance
     dedupedResults.sort((a, b) => {
       const aTitle = a.title.toLowerCase()
       const bTitle = b.title.toLowerCase()
 
-      // Exact match comes first
       if (aTitle === normalizedQuery && bTitle !== normalizedQuery) return -1
       if (bTitle === normalizedQuery && aTitle !== normalizedQuery) return 1
 
-      // Then starts with query
       if (aTitle.startsWith(normalizedQuery) && !bTitle.startsWith(normalizedQuery)) return -1
       if (bTitle.startsWith(normalizedQuery) && !aTitle.startsWith(normalizedQuery)) return 1
 
-      // Then contains query
       if (aTitle.includes(normalizedQuery) && !bTitle.includes(normalizedQuery)) return -1
       if (bTitle.includes(normalizedQuery) && !aTitle.includes(normalizedQuery)) return 1
 

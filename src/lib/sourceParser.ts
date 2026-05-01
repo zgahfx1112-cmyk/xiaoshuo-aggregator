@@ -3,13 +3,16 @@ import { JSONPath } from 'jsonpath-plus'
 import { BookSourceConfig, SearchResult, AntiCrawlConfig } from '@/lib/types'
 import { delay, randomSelect, retry, cleanContent } from '@/lib/utils'
 
+export type SourceConfigInput = BookSourceConfig | Record<string, unknown>
+
 export class SourceParser {
-  private config: BookSourceConfig
+  private config: Record<string, unknown>
   private httpClient: AxiosInstance
 
-  constructor(config: BookSourceConfig) {
-    this.config = config
-    this.httpClient = this.createHttpClient(config.antiCrawl)
+  constructor(config: SourceConfigInput) {
+    this.config = config as Record<string, unknown>
+    const antiCrawl = (config as Record<string, unknown>).antiCrawl as AntiCrawlConfig | undefined
+    this.httpClient = this.createHttpClient(antiCrawl)
   }
 
   /**
@@ -41,13 +44,14 @@ export class SourceParser {
    * Parse search results from book source
    */
   async parseSearch(query: string): Promise<SearchResult[]> {
-    const url = this.config.search.url.replace('{query}', encodeURIComponent(query))
+    const searchConfig = this.config.search as { url: string; method: string; params?: Record<string, string>; parseRules: { list: string; title: string; author: string; cover: string; bookUrl: string } }
+    const url = searchConfig.url.replace('{query}', encodeURIComponent(query))
 
     const makeRequest = async () => {
-      if (this.config.search.method === 'GET') {
-        const params = this.config.search.params
+      if (searchConfig.method === 'GET') {
+        const params = searchConfig.params
           ? Object.fromEntries(
-              Object.entries(this.config.search.params).map(([k, v]) => [
+              Object.entries(searchConfig.params).map(([k, v]) => [
                 k,
                 v.replace('{query}', query),
               ])
@@ -60,26 +64,27 @@ export class SourceParser {
     }
 
     // Apply delay if configured
-    if (this.config.antiCrawl?.delay) {
-      await delay(this.config.antiCrawl.delay)
+    const antiCrawl = this.config.antiCrawl as AntiCrawlConfig | undefined
+    if (antiCrawl?.delay) {
+      await delay(antiCrawl.delay)
     }
 
     const response = await retry(makeRequest, 3, 1000)
     const data = response.data
 
     // Parse using JSONPath or XPath
-    const list = this.parseJSONPath(data, this.config.search.parseRules.list)
+    const list = this.parseJSONPath(data, searchConfig.parseRules.list)
 
     if (!Array.isArray(list)) {
       return []
     }
 
     return list.map(item => ({
-      title: this.extractField(item, this.config.search.parseRules.title),
-      author: this.extractField(item, this.config.search.parseRules.author),
-      cover: this.extractField(item, this.config.search.parseRules.cover),
-      bookUrl: this.extractField(item, this.config.search.parseRules.bookUrl),
-      sourceName: this.config.name,
+      title: this.extractField(item, searchConfig.parseRules.title),
+      author: this.extractField(item, searchConfig.parseRules.author),
+      cover: this.extractField(item, searchConfig.parseRules.cover),
+      bookUrl: this.extractField(item, searchConfig.parseRules.bookUrl),
+      sourceName: this.config.name as string,
     }))
   }
 
@@ -92,10 +97,12 @@ export class SourceParser {
     description: string
     chapters: Array<{ title: string; url: string }>
   }> {
-    const fullUrl = this.config.bookInfo.url.replace('{id}', bookUrl)
+    const bookInfoConfig = this.config.bookInfo as { url: string; parseRules: { title: string; author: string; description: string; chapters?: { list: string; title: string; url: string } } }
+    const fullUrl = bookInfoConfig.url.replace('{id}', bookUrl)
 
-    if (this.config.antiCrawl?.delay) {
-      await delay(this.config.antiCrawl.delay)
+    const antiCrawl = this.config.antiCrawl as AntiCrawlConfig | undefined
+    if (antiCrawl?.delay) {
+      await delay(antiCrawl.delay)
     }
 
     const response = await retry(
@@ -105,7 +112,7 @@ export class SourceParser {
     )
 
     const data = response.data
-    const parseRules = this.config.bookInfo.parseRules
+    const parseRules = bookInfoConfig.parseRules
 
     const result = {
       title: this.parseJSONPath(data, parseRules.title) as string,
@@ -131,10 +138,12 @@ export class SourceParser {
    * Parse chapter content from chapter URL
    */
   async parseChapterContent(chapterUrl: string): Promise<string> {
-    const fullUrl = this.config.chapterContent.url.replace('{url}', chapterUrl)
+    const chapterConfig = this.config.chapterContent as { url: string; parseRules: { content: string; filters?: string[] } }
+    const fullUrl = chapterConfig.url.replace('{url}', chapterUrl)
 
-    if (this.config.antiCrawl?.delay) {
-      await delay(this.config.antiCrawl.delay)
+    const antiCrawl = this.config.antiCrawl as AntiCrawlConfig | undefined
+    if (antiCrawl?.delay) {
+      await delay(antiCrawl.delay)
     }
 
     const response = await retry(
@@ -146,13 +155,13 @@ export class SourceParser {
     const data = response.data
     const rawContent = this.parseJSONPath(
       data,
-      this.config.chapterContent.parseRules.content
+      chapterConfig.parseRules.content
     )
 
     // Apply content filters
     const cleaned = cleanContent(
       String(rawContent || ''),
-      this.config.chapterContent.parseRules.filters
+      chapterConfig.parseRules.filters
     )
 
     return cleaned
