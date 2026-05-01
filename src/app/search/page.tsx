@@ -23,6 +23,7 @@ import {
 } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
 import Link from 'next/link'
+import { useBookshelf } from '@/hooks/useBookshelf'
 
 interface SearchResult {
   title: string
@@ -43,7 +44,8 @@ function SearchResultsContent() {
   const searchParams = useSearchParams()
   const query = searchParams.get('query') || ''
   const page = parseInt(searchParams.get('page') || '1', 10)
-  const customSources = searchParams.get('customSources') || ''
+
+  const { getEnabledCustomSources } = useBookshelf()
 
   const [results, setResults] = useState<SearchResult[]>([])
   const [total, setTotal] = useState(0)
@@ -55,22 +57,32 @@ function SearchResultsContent() {
 
   useEffect(() => {
     if (query.trim()) {
-      performSearch(query, page, customSources)
+      performSearch(query, page)
     }
-  }, [query, page, customSources])
+  }, [query, page])
 
-  const performSearch = async (q: string, p: number, sources: string) => {
+  const performSearch = async (q: string, p: number) => {
     setLoading(true)
     setError(null)
     setSelectedSourceId(null)
+
+    const customSources = getEnabledCustomSources()
+
+    if (customSources.length === 0) {
+      setLoading(false)
+      setError('请先在书源管理页导入并启用书源')
+      return
+    }
 
     try {
       const searchUrl = new URL('/api/search', window.location.origin)
       searchUrl.searchParams.set('query', q)
       searchUrl.searchParams.set('page', String(p))
-      if (sources) {
-        searchUrl.searchParams.set('customSources', sources)
-      }
+      searchUrl.searchParams.set('customSources', JSON.stringify(customSources.map(s => ({
+        sourceId: s.sourceId,
+        sourceName: s.sourceName,
+        config: s.config
+      }))))
 
       const response = await fetch(searchUrl.toString())
       const data = await response.json()
@@ -100,19 +112,12 @@ function SearchResultsContent() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
     if (searchQuery.trim()) {
-      const params = new URLSearchParams()
-      params.set('query', searchQuery.trim())
-      if (customSources) params.set('customSources', customSources)
-      window.location.href = `/search?${params.toString()}`
+      window.location.href = `/search?query=${encodeURIComponent(searchQuery.trim())}`
     }
   }
 
   const buildPageUrl = (pageNum: number) => {
-    const params = new URLSearchParams()
-    params.set('query', query)
-    params.set('page', String(pageNum))
-    if (customSources) params.set('customSources', customSources)
-    return `/search?${params.toString()}`
+    return `/search?query=${encodeURIComponent(query)}&page=${pageNum}`
   }
 
   return (
