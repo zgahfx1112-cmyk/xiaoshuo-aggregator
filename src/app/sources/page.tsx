@@ -81,15 +81,21 @@ export default function SourcesPage() {
       const isUrl = importJson.trim().startsWith('http')
 
       if (isUrl) {
-        // 从URL获取书源
-        const response = await fetch(importJson.trim())
+        // 通过代理 API 获取书源（绕过 CORS）
+        const response = await fetch(`/api/proxy?url=${encodeURIComponent(importJson.trim())}`)
         if (!response.ok) {
-          showSnackbar('获取书源失败: ' + response.status, 'error')
+          const errorData = await response.json()
+          showSnackbar('获取书源失败: ' + (errorData.error || response.status), 'error')
           return
         }
 
-        const text = await response.text()
-        const config = JSON.parse(text)
+        const data = await response.json()
+        if (!data.success) {
+          showSnackbar('获取书源失败: ' + data.error, 'error')
+          return
+        }
+
+        const config = data.data
         importConfigs(Array.isArray(config) ? config : [config])
       } else {
         const config = JSON.parse(importJson)
