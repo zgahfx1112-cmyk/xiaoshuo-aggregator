@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { applyRateLimit } from '@/lib/rateLimit'
 
 interface RouteParams {
   params: Promise<{ id: string }>
@@ -7,6 +8,12 @@ interface RouteParams {
 
 // DELETE /api/sources/[id] - Delete a book source
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
+  // Apply rate limiting
+  const rateLimitResponse = await applyRateLimit(request)
+  if (rateLimitResponse) {
+    return rateLimitResponse
+  }
+
   try {
     const { id } = await params
 

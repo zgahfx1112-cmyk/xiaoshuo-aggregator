@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { updateBookSources, verifyCronSecret } from '@/lib/sourceUpdater'
+import { logger } from '@/lib/logger'
+import { applyRateLimit } from '@/lib/rateLimit'
 
 /**
  * GET /api/cron/update-sources
@@ -9,6 +11,12 @@ import { updateBookSources, verifyCronSecret } from '@/lib/sourceUpdater'
  * Requires CRON_SECRET verification via query parameter
  */
 export async function GET(request: NextRequest) {
+  // Apply rate limiting
+  const rateLimitResponse = await applyRateLimit(request)
+  if (rateLimitResponse) {
+    return rateLimitResponse
+  }
+
   const startTime = Date.now()
 
   try {
@@ -17,7 +25,7 @@ export async function GET(request: NextRequest) {
     const querySecret = request.nextUrl.searchParams.get('secret')
 
     if (!verifyCronSecret(authHeader, querySecret)) {
-      await logExecution('WARN', 'update-sources', 'Unauthorized access attempt')
+      await logger.warn('update-sources', 'Unauthorized access attempt')
       return NextResponse.json(
         { success: false, error: 'Unauthorized' },
         { status: 401 }
@@ -38,7 +46,7 @@ export async function GET(request: NextRequest) {
     })
 
     if (recentExecution) {
-      await logExecution('WARN', 'update-sources', 'Skipped: Another update is already running')
+      await logger.warn('update-sources', 'Skipped: Another update is already running')
       return NextResponse.json({
         success: true,
         message: 'Skipped: Another update is already running',
@@ -46,7 +54,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Log start
-    await logExecution('INFO', 'update-sources', 'Started scheduled source update')
+    await logger.info('update-sources', 'Started scheduled source update')
 
     // Execute update
     const result = await updateBookSources({
@@ -57,15 +65,14 @@ export async function GET(request: NextRequest) {
     const duration = Date.now() - startTime
 
     // Log completion
-    await logExecution(
-      'INFO',
+    await logger.info(
       'update-sources',
       `Completed: ${result.added} added, ${result.updated} updated, ${result.failed} failed (${duration}ms)`
     )
 
     // Log errors if any
     if (result.errors.length > 0) {
-      await logExecution('WARN', 'update-sources', `Errors: ${result.errors.join('; ')}`)
+      await logger.warn('update-sources', `Errors: ${result.errors.join('; ')}`)
     }
 
     return NextResponse.json({
@@ -82,9 +89,10 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     const duration = Date.now() - startTime
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    const stackTrace = error instanceof Error ? error.stack : ''
 
-    // Log error
-    await logExecution('ERROR', 'update-sources', `Failed: ${errorMessage} (${duration}ms)`)
+    // Log error with stack trace
+    await logger.error('update-sources', `Failed: ${errorMessage} (${duration}ms)${stackTrace ? `\n${stackTrace}` : ''}`)
 
     return NextResponse.json(
       {
@@ -94,26 +102,5 @@ export async function GET(request: NextRequest) {
       },
       { status: 500 }
     )
-  }
-}
-
-/**
- * Log execution to SystemLog table
- */
-async function logExecution(
-  level: 'INFO' | 'WARN' | 'ERROR',
-  task: string,
-  message: string
-): Promise<void> {
-  try {
-    await prisma.systemLog.create({
-      data: {
-        level,
-        task,
-        message,
-      },
-    })
-  } catch (error) {
-    console.error('Failed to log execution:', error)
   }
 }

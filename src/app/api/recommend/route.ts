@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { generateRecommendation, generateMockRecommendations } from '@/lib/recommendService'
+import { applyRateLimit } from '@/lib/rateLimit'
 
 export async function GET(request: NextRequest) {
+  // Apply rate limiting
+  const rateLimitResponse = await applyRateLimit(request)
+  if (rateLimitResponse) {
+    return rateLimitResponse
+  }
+
   try {
     const { searchParams } = new URL(request.url)
     const sessionId = searchParams.get('sessionId')

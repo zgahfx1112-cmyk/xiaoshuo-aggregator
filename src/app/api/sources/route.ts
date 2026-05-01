@@ -1,7 +1,14 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { applyRateLimit } from '@/lib/rateLimit'
 
-export async function GET() {
+export async function GET(request: Request) {
+  // Apply rate limiting
+  const rateLimitResponse = await applyRateLimit(request)
+  if (rateLimitResponse) {
+    return rateLimitResponse
+  }
+
   try {
     const sources = await prisma.bookSource.findMany({
       select: {

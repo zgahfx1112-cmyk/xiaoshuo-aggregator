@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { updateBookSources, verifyCronSecret } from '@/lib/sourceUpdater'
+import { applyRateLimit } from '@/lib/rateLimit'
 
 /**
  * POST /api/sources/update
@@ -7,6 +8,12 @@ import { updateBookSources, verifyCronSecret } from '@/lib/sourceUpdater'
  * Requires CRON_SECRET verification via Authorization header
  */
 export async function POST(request: NextRequest) {
+  // Apply rate limiting
+  const rateLimitResponse = await applyRateLimit(request)
+  if (rateLimitResponse) {
+    return rateLimitResponse
+  }
+
   try {
     // Verify authorization
     const authHeader = request.headers.get('authorization')

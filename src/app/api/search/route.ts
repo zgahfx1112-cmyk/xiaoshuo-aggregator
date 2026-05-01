@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { SourceParser } from '@/lib/sourceParser'
 import { BUILTIN_SOURCES } from '@/config/sources'
 import { SearchResult } from '@/lib/types'
+import { applyRateLimit } from '@/lib/rateLimit'
 
 interface SearchApiResponse {
   success: boolean
@@ -36,6 +37,12 @@ function deduplicateResults(results: SearchResult[]): SearchResult[] {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse<SearchApiResponse>> {
+  // Apply rate limiting
+  const rateLimitResponse = await applyRateLimit(request)
+  if (rateLimitResponse) {
+    return rateLimitResponse as NextResponse<SearchApiResponse>
+  }
+
   const searchParams = request.nextUrl.searchParams
   const query = searchParams.get('query')
   const page = parseInt(searchParams.get('page') || '1', 10)

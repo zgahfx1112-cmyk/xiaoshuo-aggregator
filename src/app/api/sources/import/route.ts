@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { validateSourceConfig, BookSourceConfig } from '@/config/sources'
+import { applyRateLimit } from '@/lib/rateLimit'
 
 // POST /api/sources/import - Import a book source
 export async function POST(request: NextRequest) {
+  // Apply rate limiting
+  const rateLimitResponse = await applyRateLimit(request)
+  if (rateLimitResponse) {
+    return rateLimitResponse
+  }
+
   try {
     const body = await request.json()
 

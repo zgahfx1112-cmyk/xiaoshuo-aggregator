@@ -4,6 +4,7 @@ import { cacheGet, cacheSet, CacheKeys, CacheTTL } from '@/lib/redis'
 import { SourceParser } from '@/lib/sourceParser'
 import { getBuiltinSource } from '@/config/sources'
 import { ApiResponse } from '@/lib/types'
+import { applyRateLimit } from '@/lib/rateLimit'
 
 interface ChapterContentResponse {
   content: string
@@ -17,6 +18,12 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ novelId: string; num: string }> }
 ) {
+  // Apply rate limiting
+  const rateLimitResponse = await applyRateLimit(request)
+  if (rateLimitResponse) {
+    return rateLimitResponse
+  }
+
   try {
     const { novelId, num } = await params
     const chapterNum = parseInt(num, 10)

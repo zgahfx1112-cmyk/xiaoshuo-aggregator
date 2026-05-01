@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cacheGet, cacheSet, CacheKeys, CacheTTL } from '@/lib/redis'
+import { applyRateLimit } from '@/lib/rateLimit'
 
 // Mock hot novels data
 const mockHotNovels: Record<string, Array<{
@@ -78,6 +79,12 @@ const mockHotNovels: Record<string, Array<{
 const categories = ['玄幻', '都市', '言情', '历史', '科幻']
 
 export async function GET(request: NextRequest) {
+  // Apply rate limiting
+  const rateLimitResponse = await applyRateLimit(request)
+  if (rateLimitResponse) {
+    return rateLimitResponse
+  }
+
   try {
     const { searchParams } = new URL(request.url)
     const category = searchParams.get('category') || '玄幻'

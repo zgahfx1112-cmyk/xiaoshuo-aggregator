@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { cacheGet, cacheSet, CacheKeys, CacheTTL } from '@/lib/redis'
+import { applyRateLimit } from '@/lib/rateLimit'
 
 interface RouteParams {
   params: Promise<{ id: string }>
@@ -10,6 +11,12 @@ export async function GET(
   request: Request,
   { params }: RouteParams
 ) {
+  // Apply rate limiting
+  const rateLimitResponse = await applyRateLimit(request)
+  if (rateLimitResponse) {
+    return rateLimitResponse
+  }
+
   try {
     const { id } = await params
     const { searchParams } = new URL(request.url)
