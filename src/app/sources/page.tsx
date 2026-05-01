@@ -50,6 +50,7 @@ export default function SourcesPage() {
   const [importing, setImporting] = useState(false)
   const [testingSource, setTestingSource] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [importMode, setImportMode] = useState<'json' | 'url'>('json')
 
   const fetchSources = useCallback(async () => {
     try {
@@ -99,17 +100,29 @@ export default function SourcesPage() {
 
   const handleImport = async () => {
     if (!importJson.trim()) {
-      showSnackbar('请输入书源配置', 'error')
+      showSnackbar('请输入书源配置或URL', 'error')
       return
     }
 
     setImporting(true)
     try {
-      const config = JSON.parse(importJson)
+      // Check if input is a URL
+      const isUrl = importJson.trim().startsWith('http')
+      let body: string
+
+      if (isUrl) {
+        // Send URL directly
+        body = JSON.stringify(importJson.trim())
+      } else {
+        // Parse as JSON config
+        const config = JSON.parse(importJson)
+        body = JSON.stringify(config)
+      }
+
       const response = await fetch('/api/sources/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body,
       })
 
       const data = await response.json()
@@ -405,7 +418,7 @@ export default function SourcesPage() {
         <DialogTitle>导入书源</DialogTitle>
         <DialogContent>
           <Alert severity="info" sx={{ mb: 2 }}>
-            请粘贴书源JSON配置，支持单个或数组格式
+            支持书源JSON配置、JSON文件URL链接
           </Alert>
           <TextField
             fullWidth
@@ -413,7 +426,7 @@ export default function SourcesPage() {
             rows={10}
             value={importJson}
             onChange={(e) => setImportJson(e.target.value)}
-            placeholder='{"name": "书源名称", "url": "https://example.com", "version": 1, ...}'
+            placeholder='输入书源JSON配置，或粘贴书源JSON文件URL链接（如：https://xxx.com/sources.json）'
             sx={{ fontFamily: 'monospace' }}
           />
         </DialogContent>

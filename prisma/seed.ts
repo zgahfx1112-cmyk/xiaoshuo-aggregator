@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
 import pg from 'pg'
 import { BUILTIN_SOURCES } from '../src/config/sources'
+import { syncYckceoSources } from '../src/lib/yckceoScraper'
 
 const connectionString = process.env.DATABASE_URL!
 const pool = new pg.Pool({ connectionString })
@@ -38,10 +39,20 @@ async function main() {
           url: source.url,
           config: source as object,
           type: 'builtin',
+          enabled: true,
         },
       })
       console.log(`Created new source: ${source.name}`)
     }
+  }
+
+  // Sync from yckceo.com on startup
+  console.log('Syncing sources from yckceo.com...')
+  try {
+    const result = await syncYckceoSources()
+    console.log(`Synced ${result.total} sources: ${result.added} added, ${result.updated} updated, ${result.failed} failed`)
+  } catch (error) {
+    console.error('Failed to sync from yckceo:', error)
   }
 
   console.log('Seeding completed!')
