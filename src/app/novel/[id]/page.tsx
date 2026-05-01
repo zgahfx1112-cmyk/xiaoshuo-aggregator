@@ -60,18 +60,39 @@ export async function generateMetadata({ params }: RouteParams) {
     if (!data) {
       return {
         title: 'Novel Not Found',
+        description: 'The requested novel could not be found.',
       }
     }
 
     const { novel } = data
+    const description = novel.description?.slice(0, 160) || `Read ${novel.title} by ${novel.author}`
+    const title = `${novel.title} - ${novel.author}`
 
     return {
-      title: `${novel.title} - Xiaoshuo`,
-      description: novel.description?.slice(0, 160) || `Read ${novel.title} by ${novel.author}`,
+      title,
+      description,
+      openGraph: {
+        title,
+        description,
+        type: 'article',
+        images: novel.cover ? [{ url: novel.cover, alt: novel.title }] : [],
+        authors: [novel.author],
+        tags: novel.tags,
+      },
+      twitter: {
+        card: 'summary_large_image',
+        title,
+        description,
+        images: novel.cover ? [novel.cover] : [],
+      },
+      alternates: {
+        canonical: `/novel/${novel.id}`,
+      },
     }
   } catch {
     return {
       title: 'Novel - Xiaoshuo',
+      description: 'Browse novels on Xiaoshuo platform.',
     }
   }
 }
