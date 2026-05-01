@@ -18,8 +18,16 @@ export interface UserSourceConfig {
   sourceId: string
   sourceName: string
   enabled: boolean
-  isCustom: boolean // 是否用户自己导入的书源
-  config?: object // 书源完整配置
+  isCustom: boolean
+  groupId?: string // 所属分组
+  config?: object
+}
+
+// 书源分组
+export interface SourceGroup {
+  id: string
+  name: string
+  createdAt: string
 }
 
 interface BookshelfState {
@@ -28,6 +36,7 @@ interface BookshelfState {
 
 interface UserSourceState {
   sources: UserSourceConfig[]
+  groups: SourceGroup[]
 }
 
 interface BookshelfContextType {
@@ -41,8 +50,16 @@ interface BookshelfContextType {
   userSourceConfigs: UserSourceConfig[]
   setUserSourceEnabled: (sourceId: string, enabled: boolean) => void
   addUserSource: (config: UserSourceConfig) => void
+  addMultipleSources: (configs: UserSourceConfig[]) => void
   removeUserSource: (sourceId: string) => void
+  removeMultipleSources: (sourceIds: string[]) => void
   getEnabledCustomSources: () => UserSourceConfig[]
+  // 分组管理
+  sourceGroups: SourceGroup[]
+  addGroup: (name: string) => void
+  removeGroup: (id: string) => void
+  setSourceGroup: (sourceId: string, groupId: string | undefined) => void
+  getSourcesByGroup: (groupId: string) => UserSourceConfig[]
 }
 
 const BOOKSHELF_STORAGE_KEY = 'xiaoshuo_bookshelf'
@@ -78,6 +95,7 @@ function saveToStorage<T>(key: string, value: T): void {
 export function BookshelfProvider({ children }: { children: ReactNode }) {
   const [bookshelf, setBookshelf] = useState<BookshelfItem[]>([])
   const [userSourceConfigs, setUserSourceConfigs] = useState<UserSourceConfig[]>([])
+  const [sourceGroups, setSourceGroups] = useState<SourceGroup[]>([])
   const [isInitialized, setIsInitialized] = useState(false)
 
   // 初始化：从 localStorage 加载
@@ -85,8 +103,9 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
     const bookshelfState = loadFromStorage<BookshelfState>(BOOKSHELF_STORAGE_KEY, { novels: [] })
     setBookshelf(bookshelfState.novels)
 
-    const userSourceState = loadFromStorage<UserSourceState>(USER_SOURCES_STORAGE_KEY, { sources: [] })
+    const userSourceState = loadFromStorage<UserSourceState>(USER_SOURCES_STORAGE_KEY, { sources: [], groups: [] })
     setUserSourceConfigs(userSourceState.sources)
+    setSourceGroups(userSourceState.groups || [])
 
     setIsInitialized(true)
   }, [])
@@ -101,9 +120,9 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
   // 保存用户书源配置到 localStorage
   useEffect(() => {
     if (isInitialized) {
-      saveToStorage(USER_SOURCES_STORAGE_KEY, { sources: userSourceConfigs })
+      saveToStorage(USER_SOURCES_STORAGE_KEY, { sources: userSourceConfigs, groups: sourceGroups })
     }
-  }, [userSourceConfigs, isInitialized])
+  }, [userSourceConfigs, sourceGroups, isInitialized])
 
   // 书架操作
   const addToBookshelf = useCallback((item: Omit<BookshelfItem, 'addedAt' | 'lastReadAt'>) => {
@@ -165,12 +184,52 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  const addMultipleSources = useCallback((configs: UserSourceConfig[]) => {
+    setUserSourceConfigs((prev) => {
+      const existingIds = new Set(configs.map(c => c.sourceId))
+      const filtered = prev.filter((s) => !existingIds.has(s.sourceId))
+      return [...filtered, ...configs]
+    })
+  }, [])
+
   const removeUserSource = useCallback((sourceId: string) => {
     setUserSourceConfigs((prev) => prev.filter((s) => s.sourceId !== sourceId))
   }, [])
 
+  const removeMultipleSources = useCallback((sourceIds: string[]) => {
+    setUserSourceConfigs((prev) => prev.filter((s) => !sourceIds.includes(s.sourceId)))
+  }, [])
+
   const getEnabledCustomSources = useCallback(() => {
     return userSourceConfigs.filter((s) => s.enabled && s.isCustom && s.config)
+  }, [userSourceConfigs])
+
+  // 分组管理
+  const addGroup = useCallback((name: string) => {
+    const newGroup: SourceGroup = {
+      id: `group_${Date.now()}`,
+      name,
+      createdAt: new Date().toISOString(),
+    }
+    setSourceGroups((prev) => [...prev, newGroup])
+  }, [])
+
+  const removeGroup = useCallback((id: string) => {
+    setSourceGroups((prev) => prev.filter((g) => g.id !== id))
+    // 清除该分组下的书源的 groupId
+    setUserSourceConfigs((prev) =>
+      prev.map((s) => s.groupId === id ? { ...s, groupId: undefined } : s)
+    )
+  }, [])
+
+  const setSourceGroup = useCallback((sourceId: string, groupId: string | undefined) => {
+    setUserSourceConfigs((prev) =>
+      prev.map((s) => s.sourceId === sourceId ? { ...s, groupId } : s)
+    )
+  }, [])
+
+  const getSourcesByGroup = useCallback((groupId: string) => {
+    return userSourceConfigs.filter((s) => s.groupId === groupId)
   }, [userSourceConfigs])
 
   const value = useMemo(
@@ -184,8 +243,15 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
       userSourceConfigs,
       setUserSourceEnabled,
       addUserSource,
+      addMultipleSources,
       removeUserSource,
+      removeMultipleSources,
       getEnabledCustomSources,
+      sourceGroups,
+      addGroup,
+      removeGroup,
+      setSourceGroup,
+      getSourcesByGroup,
     }),
     [
       bookshelf,
@@ -197,8 +263,15 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
       userSourceConfigs,
       setUserSourceEnabled,
       addUserSource,
+      addMultipleSources,
       removeUserSource,
+      removeMultipleSources,
       getEnabledCustomSources,
+      sourceGroups,
+      addGroup,
+      removeGroup,
+      setSourceGroup,
+      getSourcesByGroup,
     ]
   )
 
