@@ -39,3 +39,4 @@ prisma/migrations/*_*
 # IDE
 .vscode/
 .idea/
+/src/generated/prisma
