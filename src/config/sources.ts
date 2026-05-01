@@ -1,6 +1,9 @@
 import { BookSourceConfig } from '@/lib/types'
 import { DEFAULT_ANTICRAWL } from './constants'
 
+// Export the type for use in other modules
+export type { BookSourceConfig } from '@/lib/types'
+
 // Builtin book sources
 export const BUILTIN_SOURCES: BookSourceConfig[] = [
   // Example source template (will add real sources later)
