@@ -6,12 +6,6 @@ import {
   Container,
   Typography,
   IconButton,
-  Slider,
-  Drawer,
-  FormControl,
-  RadioGroup,
-  FormControlLabel,
-  Radio,
   Button,
   AppBar,
   Toolbar,
@@ -20,14 +14,16 @@ import {
   useMediaQuery,
 } from '@mui/material'
 import {
-  ArrowBack,
   Settings as SettingsIcon,
   ChevronLeft,
   ChevronRight,
 } from '@mui/icons-material'
-
-export type BackgroundTheme = 'white' | 'sepia' | 'dark'
-export type PageMode = 'click' | 'scroll'
+import ReadingSettings, {
+  ReaderSettings as ReaderSettingsType,
+  DEFAULT_SETTINGS,
+  SETTINGS_KEY,
+  BACKGROUND_STYLES,
+} from './ReadingSettings'
 
 interface ReaderProps {
   content: string
@@ -37,27 +33,7 @@ interface ReaderProps {
   prevChapter: number | null
   onPrevChapter?: () => void
   onNextChapter?: () => void
-  onSettingsChange?: (settings: ReaderSettings) => void
-}
-
-export interface ReaderSettings {
-  fontSize: number
-  background: BackgroundTheme
-  pageMode: PageMode
-}
-
-const SETTINGS_KEY = 'reader_settings'
-
-const DEFAULT_SETTINGS: ReaderSettings = {
-  fontSize: 18,
-  background: 'white',
-  pageMode: 'scroll',
-}
-
-const BACKGROUND_STYLES: Record<BackgroundTheme, { bg: string; color: string }> = {
-  white: { bg: '#ffffff', color: '#333333' },
-  sepia: { bg: '#f4ecd8', color: '#5b4636' },
-  dark: { bg: '#1a1a1a', color: '#e0e0e0' },
+  onSettingsChange?: (settings: ReaderSettingsType) => void
 }
 
 export function Reader({
@@ -75,7 +51,7 @@ export function Reader({
   const containerRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
 
-  const [settings, setSettings] = useState<ReaderSettings>(DEFAULT_SETTINGS)
+  const [settings, setSettings] = useState<ReaderSettingsType>(DEFAULT_SETTINGS)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [currentPage, setCurrentPage] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
@@ -87,7 +63,7 @@ export function Reader({
     try {
       const stored = localStorage.getItem(SETTINGS_KEY)
       if (stored) {
-        const parsed = JSON.parse(stored) as Partial<ReaderSettings>
+        const parsed = JSON.parse(stored) as Partial<ReaderSettingsType>
         setSettings({ ...DEFAULT_SETTINGS, ...parsed })
       }
     } catch {
@@ -97,7 +73,7 @@ export function Reader({
 
   // Save settings to localStorage
   const updateSettings = useCallback(
-    (newSettings: Partial<ReaderSettings>) => {
+    (newSettings: Partial<ReaderSettingsType>) => {
       setSettings(prev => {
         const updated = { ...prev, ...newSettings }
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated))
@@ -354,109 +330,13 @@ export function Reader({
       </Paper>
 
       {/* Settings Drawer */}
-      <Drawer
-        anchor="bottom"
+      <ReadingSettings
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        slotProps={{
-          paper: {
-            sx: { bgcolor: bgStyle.bg, color: bgStyle.color },
-          },
-        }}
-      >
-        <Box sx={{ p: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            Reading Settings
-          </Typography>
-
-          {/* Font Size */}
-          <Box sx={{ mb: 3 }}>
-            <Typography gutterBottom>Font Size: {settings.fontSize}px</Typography>
-            <Slider
-              value={settings.fontSize}
-              onChange={(_, value) => updateSettings({ fontSize: value as number })}
-              min={12}
-              max={24}
-              step={1}
-              marks={[
-                { value: 12, label: '12' },
-                { value: 18, label: '18' },
-                { value: 24, label: '24' },
-              ]}
-              valueLabelDisplay="auto"
-              sx={{ color: bgStyle.color === '#e0e0e0' ? '#90caf9' : 'primary' }}
-            />
-          </Box>
-
-          {/* Background Theme */}
-          <Box sx={{ mb: 3 }}>
-            <Typography gutterBottom>Background Theme</Typography>
-            <FormControl>
-              <RadioGroup
-                row
-                value={settings.background}
-                onChange={e =>
-                  updateSettings({ background: e.target.value as BackgroundTheme })
-                }
-              >
-                <FormControlLabel
-                  value="white"
-                  control={<Radio />}
-                  label="White"
-                  sx={{ color: bgStyle.color }}
-                />
-                <FormControlLabel
-                  value="sepia"
-                  control={<Radio />}
-                  label="Sepia"
-                  sx={{ color: bgStyle.color }}
-                />
-                <FormControlLabel
-                  value="dark"
-                  control={<Radio />}
-                  label="Dark"
-                  sx={{ color: bgStyle.color }}
-                />
-              </RadioGroup>
-            </FormControl>
-          </Box>
-
-          {/* Page Mode */}
-          <Box sx={{ mb: 2 }}>
-            <Typography gutterBottom>Page Mode</Typography>
-            <FormControl>
-              <RadioGroup
-                row
-                value={settings.pageMode}
-                onChange={e => updateSettings({ pageMode: e.target.value as PageMode })}
-              >
-                <FormControlLabel
-                  value="scroll"
-                  control={<Radio />}
-                  label="Scroll"
-                  sx={{ color: bgStyle.color }}
-                />
-                <FormControlLabel
-                  value="click"
-                  control={<Radio />}
-                  label="Click to Page"
-                  sx={{ color: bgStyle.color }}
-                />
-              </RadioGroup>
-            </FormControl>
-          </Box>
-
-          {/* Close Button */}
-          <Button
-            variant="contained"
-            fullWidth
-            onClick={() => setSettingsOpen(false)}
-            sx={{ mt: 2 }}
-          >
-            Close
-          </Button>
-        </Box>
-      </Drawer>
+        settings={settings}
+        onSettingsChange={updateSettings}
+        bgStyle={bgStyle}
+      />
     </Box>
   )
 }
