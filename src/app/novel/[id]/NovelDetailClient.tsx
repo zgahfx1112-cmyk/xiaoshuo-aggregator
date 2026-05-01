@@ -16,6 +16,7 @@ import {
   Alert,
 } from '@mui/material'
 import ChapterList from '@/components/ChapterList'
+import Comment from '@/components/Comment'
 
 // Inline SVG icons to avoid additional dependency
 const ArrowBackIcon = () => (
@@ -260,6 +261,11 @@ export default function NovelDetailClient({ novel, chapters, totalChapters }: No
           initialChapters={chapters}
           totalChapters={totalChapters ?? chapters.length}
         />
+      </Paper>
+
+      {/* Comments section */}
+      <Paper sx={{ p: 2, mt: 3 }}>
+        <Comment />
       </Paper>
 
       {/* Snackbar for notifications */}
