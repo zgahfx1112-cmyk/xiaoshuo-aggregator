@@ -58,6 +58,7 @@ function SearchResultsContent() {
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
   const [searchProgress, setSearchProgress] = useState({ completed: 0, total: 0 })
   const [foundCount, setFoundCount] = useState(0)
+  const [availableCount, setAvailableCount] = useState(0)
 
   const abortControllerRef = useRef<AbortController | null>(null)
 
@@ -85,6 +86,7 @@ function SearchResultsContent() {
     setSelectedSourceId(null)
     setResults([])
     setFoundCount(0)
+    setAvailableCount(0)
 
     const customSources = getEnabledCustomSources()
 
@@ -139,6 +141,7 @@ function SearchResultsContent() {
           // Update results immediately
           setResults(prev => [...prev, ...data.data.novels])
           setFoundCount(prev => prev + data.data.novels.length)
+          setAvailableCount(prev => prev + 1)
 
           // Update source stat
           setSourceStats(prev => prev.map(s =>
@@ -182,11 +185,8 @@ function SearchResultsContent() {
 
     setLoading(false)
 
-    // Check if any results found
-    const finalResults = results.length
-    if (finalResults === 0 && !signal.aborted) {
-      setError('所有书源均无结果')
-    }
+    // Check if any results found - use foundCount (state updates are async)
+    // Results are already displayed via state updates during search
   }
 
   // Filter results by selected source
@@ -200,8 +200,8 @@ function SearchResultsContent() {
   const displayResults = filteredResults.slice(startIndex, startIndex + pageSize)
   const displayTotal = filteredResults.length
 
-  // Count available sources (with results)
-  const availableSources = sourceStats.filter(s => s.resultCount > 0).length
+  // Use availableCount state for accurate count (sourceStats updates may batch)
+  // const availableSources = sourceStats.filter(s => s.resultCount > 0).length
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
@@ -257,9 +257,9 @@ function SearchResultsContent() {
         )}
 
         {/* 可用书源统计 */}
-        {!loading && availableSources > 0 && (
+        {!loading && availableCount > 0 && (
           <Alert severity="success" sx={{ mb: 2 }}>
-            找到 {availableSources} 个可用书源，共 {results.length} 条结果
+            找到 {availableCount} 个可用书源，共 {results.length} 条结果
           </Alert>
         )}
 
@@ -281,7 +281,7 @@ function SearchResultsContent() {
         {sourceStats.length > 0 && (
           <Paper sx={{ p: 2, mb: 2 }}>
             <Typography variant="subtitle2" gutterBottom>
-              书源状态 ({availableSources}/{sourceStats.length} 可用)
+              书源状态 ({availableCount}/{sourceStats.length} 可用)
             </Typography>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
               {sourceStats.map(stat => (

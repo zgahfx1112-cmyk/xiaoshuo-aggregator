@@ -49,17 +49,23 @@ export async function POST(request: NextRequest): Promise<NextResponse<SearchApi
     // Search single source with timeout
     const results = await searchSingleSource(query, source, timeout)
 
+    // Add sourceId to each result
+    const resultsWithSourceId = results.map(r => ({
+      ...r,
+      sourceId: source.sourceId,
+    }))
+
     return NextResponse.json({
       success: true,
       data: {
-        novels: results,
-        total: results.length,
+        novels: resultsWithSourceId,
+        total: resultsWithSourceId.length,
         page: 1,
         sources: [{
           id: source.sourceId,
           name: source.sourceName,
-          resultCount: results.length,
-          error: results.length === 0 ? '无结果' : undefined
+          resultCount: resultsWithSourceId.length,
+          error: resultsWithSourceId.length === 0 ? '无结果' : undefined
         }],
       },
     })

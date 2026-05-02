@@ -529,6 +529,7 @@ export class SourceParser {
               cover: this.buildUrl(cover),
               bookUrl: this.buildUrl(bookUrl),
               sourceName: config.bookSourceName,
+              sourceId: this.config.bookSourceUrl,
             })
           }
         }
@@ -592,6 +593,7 @@ export class SourceParser {
             cover: this.buildUrl(cover),
             bookUrl: this.buildUrl(bookUrl),
             sourceName: config.bookSourceName,
+            sourceId: this.config.bookSourceUrl,
           })
         }
       })
