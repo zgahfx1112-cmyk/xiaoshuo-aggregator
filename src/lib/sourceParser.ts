@@ -1,122 +1,360 @@
 import axios, { AxiosInstance } from 'axios'
+import * as cheerio from 'cheerio'
 import { JSONPath } from 'jsonpath-plus'
 import { SearchResult } from '@/lib/types'
 import { delay, retry, cleanContent } from '@/lib/utils'
 
-// yckceo.com 书源格式
+// yckceo.com 阅读APP书源格式
 interface YckceoSourceConfig {
   bookSourceName: string
   bookSourceUrl: string
   searchUrl?: string
+  // 新格式：ruleSearch
+  ruleSearch?: {
+    bookList?: string
+    name?: string
+    author?: string
+    coverUrl?: string
+    bookUrl?: string
+    intro?: string
+    kind?: string
+    lastChapter?: string
+    checkKeyWord?: string
+  }
+  // 旧格式兼容
   searchList?: string
   searchName?: string
   searchAuthor?: string
   searchCover?: string
   searchBookUrl?: string
+  // 书籍详情
+  ruleBookInfo?: {
+    init?: string
+    name?: string
+    author?: string
+    coverUrl?: string
+    intro?: string
+    kind?: string
+    lastChapter?: string
+    tocUrl?: string
+    wordCount?: string
+  }
   bookInfoInit?: string
   bookName?: string
   bookAuthor?: string
   bookCoverUrl?: string
   bookIntro?: string
+  // 目录
+  ruleToc?: {
+    chapterList?: string
+    chapterName?: string
+    chapterUrl?: string
+    nextTocUrl?: string
+  }
   chapterList?: string
   chapterName?: string
   chapterUrl?: string
-  contentUrl?: string
-  bookContent?: string
-  header?: string
-  concurrentRate?: string
-  loginUrl?: string
-  loginCheckJs?: string
-  ruleSearch?: {
-    list?: string
-    name?: string
-    author?: string
-    cover?: string
-    bookUrl?: string
-  }
-  ruleBookInfo?: {
-    init?: string
-    name?: string
-    author?: string
-    cover?: string
-    intro?: string
-  }
-  ruleToc?: {
-    list?: string
-    name?: string
-    chapterUrl?: string
-  }
+  // 内容
   ruleContent?: {
     content?: string
+    nextContentUrl?: string
+    replaceRegex?: string
   }
+  contentUrl?: string
+  bookContent?: string
+  // 其他
+  header?: string
+  concurrentRate?: string
+  enabledCookieJar?: boolean
+  bookSourceGroup?: string
 }
 
 export type SourceConfigInput = YckceoSourceConfig | Record<string, unknown>
 
 export class SourceParser {
-  private config: Record<string, unknown>
+  private config: YckceoSourceConfig
   private httpClient: AxiosInstance
+  private baseUrl: string
 
   constructor(config: SourceConfigInput) {
-    this.config = config as Record<string, unknown>
-    const header = this.config.header as string | undefined
+    this.config = config as YckceoSourceConfig
+    this.baseUrl = this.config.bookSourceUrl || ''
+    const header = this.config.header
     this.httpClient = this.createHttpClient(header)
   }
 
   private createHttpClient(header?: string): AxiosInstance {
-    const client = axios.create({
-      timeout: 10000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        ...(header ? this.parseHeader(header) : {}),
-      },
+    const headers: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Nexus 5X) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.1369.112 Mobile Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'zh-CN,zh;q=0.9',
+    }
+
+    // Parse custom header
+    if (header) {
+      try {
+        // Format: {'key':'value','key2':'value2'} or key:value|key2:value2
+        if (header.startsWith('{')) {
+          const parsed = JSON.parse(header.replace(/'/g, '"'))
+          Object.assign(headers, parsed)
+        } else {
+          const pairs = header.split('|')
+          for (const pair of pairs) {
+            const [key, value] = pair.split(':')
+            if (key && value) {
+              headers[key.trim()] = value.trim()
+            }
+          }
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
+    // Add Referer
+    if (this.baseUrl) {
+      headers['Referer'] = this.baseUrl
+    }
+
+    return axios.create({
+      timeout: 15000,
+      headers,
+      withCredentials: true,
     })
-    return client
   }
 
-  private parseHeader(headerStr: string): Record<string, string> {
-    const headers: Record<string, string> = {}
-    try {
-      // header format: "key:value|key2:value2"
-      const pairs = headerStr.split('|')
-      for (const pair of pairs) {
-        const [key, value] = pair.split(':')
-        if (key && value) {
-          headers[key.trim()] = value.trim()
+  // Parse rule string and extract value from data/HTML
+  private parseRuleValue(data: unknown, rule: string): string | string[] {
+    if (!rule) return ''
+
+    // Remove JS suffix like @js:java.t2s(result)
+    let cleanRule = rule.split('@js:')[0].split('<js>')[0]
+
+    // Handle JSON data
+    if (typeof data === 'object' && data !== null && typeof (data as any).html !== 'function') {
+      // JSONPath
+      if (cleanRule.startsWith('$')) {
+        const result = JSONPath({ path: cleanRule, json: data as object })
+        return result.length === 1 ? String(result[0]) : result.map(String)
+      }
+      // Simple field
+      const value = (data as Record<string, unknown>)[cleanRule]
+      return value ? String(value) : ''
+    }
+
+    // Handle HTML data
+    const html = typeof data === 'string' ? data : ''
+    if (!html) return ''
+
+    const $ = cheerio.load(html)
+
+    // Parse rule patterns
+    // Examples:
+    // - tag.a.0@href → first <a> href attribute
+    // - id.content.0@text → element with id="content" text
+    // - class.title.0@text → first .title element text
+    // - //meta[@property='og:title']/@content → XPath (simplified)
+    // - @css:.title@text → CSS selector
+
+    let result: string | string[] = ''
+
+    // CSS selector format: @css:selector
+    if (cleanRule.startsWith('@css:')) {
+      const selector = cleanRule.slice(6)
+      const attrMatch = selector.match(/@(.+)$/)
+      const attr = attrMatch ? attrMatch[1] : 'text'
+      const sel = attrMatch ? selector.slice(0, -attrMatch[0].length) : selector
+
+      const elements = $(sel)
+      if (elements.length > 0) {
+        result = attr === 'text' || attr === 'textNodes'
+          ? elements.text()
+          : elements.attr(attr) || ''
+      }
+    }
+    // XPath-like: //tag[@attr='value']/@attr
+    else if (cleanRule.startsWith('//')) {
+      // Simplified XPath → convert to CSS/cheerio
+      result = this.parseXPath($, cleanRule)
+    }
+    //阅读APP规则: id.xxx, class.xxx, tag.xxx
+    else if (cleanRule.match(/^(id|class|tag)\./)) {
+      result = this.parseReadRule($, cleanRule)
+    }
+    // Plain text/HTML content
+    else if (cleanRule === 'text' || cleanRule === 'html' || cleanRule === 'body') {
+      result = cleanRule === 'html' ? html : $.root().text()
+    }
+
+    // Apply textNodes special handling
+    if (rule.includes('@textNodes')) {
+      const sel = cleanRule.split('@')[0]
+      const $elements = cheerio.load(html)(sel)
+      const texts: string[] = []
+      $elements.contents().each((_: number, el: any) => {
+        if (el.type === 'text') {
+          texts.push($(el).text())
+        }
+      })
+      result = texts.join('\n')
+    }
+
+    // Get attribute: @href, @src, @content, @alt, @text
+    const attrMatch = cleanRule.match(/@([a-zA-Z]+)$/)
+    if (attrMatch && typeof result === 'string' && !result) {
+      const attr = attrMatch[1]
+      const sel = cleanRule.slice(0, -attrMatch[0].length)
+      const elements = this.selectElements($, sel)
+      if (elements.length > 0) {
+        result = attr === 'text' ? elements.text() : elements.attr(attr) || elements.find(attr).text() || ''
+      }
+    }
+
+    return result
+  }
+
+  // Select elements by 阅读APP rule format
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private selectElements($: any, rule: string): any {
+    if (!rule) return $.root()
+
+    // id.xxx → #xxx
+    if (rule.startsWith('id.')) {
+      const id = rule.slice(3).split('.')[0].split('@')[0]
+      return $(`#${id}`)
+    }
+
+    // class.xxx → .xxx
+    if (rule.startsWith('class.')) {
+      const cls = rule.slice(6).split('.')[0].split('@')[0]
+      return $(`.${cls}`)
+    }
+
+    // tag.xxx → xxx
+    if (rule.startsWith('tag.')) {
+      const tag = rule.slice(4).split('.')[0].split('@')[0]
+      return $(tag)
+    }
+
+    // Default: try as CSS selector
+    return $(rule)
+  }
+
+  // Parse 阅读APP rule: id.xxx.0@text, tag.a.1@href, class.list.0@tag.li
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private parseReadRule($: any, rule: string): string {
+    const parts = rule.split('@')
+    const selectorParts = parts[0].split('.')
+    const attr = parts[1] || 'text'
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let current: any = $.root()
+    let idx = 0
+
+    for (const part of selectorParts) {
+      if (!part) continue
+
+      // Index: 0, 1, 2
+      if (/^\d+$/.test(part)) {
+        const index = parseInt(part, 10)
+        current = current.children().eq(index)
+        continue
+      }
+
+      // Type prefix
+      if (part === 'id') {
+        const next = selectorParts[idx + 1]
+        if (next) {
+          current = $(`#${next}`)
+          idx += 2
+          continue
+        }
+      } else if (part === 'class') {
+        const next = selectorParts[idx + 1]
+        if (next) {
+          current = current.find(`.${next}`)
+          idx += 2
+          continue
+        }
+      } else if (part === 'tag') {
+        const next = selectorParts[idx + 1]
+        if (next) {
+          current = current.find(next)
+          idx += 2
+          continue
         }
       }
-    } catch {
-      // Ignore parse errors
+
+      // Plain selector
+      current = current.find(part)
+      idx++
     }
-    return headers
+
+    // Get attribute/text
+    if (attr === 'text' || attr === 'textNodes') {
+      return current.text()
+    }
+    return current.attr(attr) || ''
+  }
+
+  // Simplified XPath parsing
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private parseXPath($: any, xpath: string): string {
+    // //meta[@property='og:title']/@content → meta[property='og:title'] attr content
+    // //div[@class='content']/p → div.content p
+
+    let cssSelector = xpath
+      .replace(/^\/\//, '')  // Remove leading //
+      .replace(/\[@(\w+)='([^']+)'\]/g, '[$1="$2"]')  // Keep attribute selectors
+      .replace(/\[@(\w+)\]/g, '[$1]')  // Keep simple attributes
+      .replace(/\/@(\w+)$/, '')  // Extract trailing attribute
+      .replace(/\//g, ' > ')  // Convert path to CSS
+
+    const attrMatch = xpath.match(/\/@(\w+)$/)
+    const attr = attrMatch ? attrMatch[1] : 'text'
+
+    const elements = $(cssSelector)
+    if (elements.length > 0) {
+      return attr === 'text' ? elements.text() : elements.attr(attr) || ''
+    }
+    return ''
+  }
+
+  // Build absolute URL
+  private buildUrl(url: string): string {
+    if (!url) return ''
+    if (url.startsWith('http')) return url
+    if (url.startsWith('/')) return this.baseUrl + url
+    return this.baseUrl + '/' + url
+  }
+
+  // Extract search URL from config (handle JS code wrapper)
+  private getSearchUrl(query: string): string | null {
+    let searchUrl = this.config.searchUrl || ''
+    if (!searchUrl) return null
+
+    // Remove JS wrapper: <js>...;</js>/search/{{key}}/1.html
+    const jsMatch = searchUrl.match(/<\/js>(.+)$/)
+    if (jsMatch) {
+      searchUrl = jsMatch[1]
+    }
+
+    // Replace placeholders
+    searchUrl = searchUrl.replace(/{{key}}/g, encodeURIComponent(query))
+    searchUrl = searchUrl.replace(/{key}/g, encodeURIComponent(query))
+    searchUrl = searchUrl.replace(/{{page}}/g, '1')
+    searchUrl = searchUrl.replace(/{page}/g, '1')
+
+    // Build full URL
+    return this.buildUrl(searchUrl)
   }
 
   async parseSearch(query: string): Promise<SearchResult[]> {
-    const config = this.config as unknown as YckceoSourceConfig
-
-    // Get search URL - support both formats
-    let searchUrl = config.searchUrl || ''
-    if (!searchUrl) {
-      return []
-    }
-
-    // Replace query placeholder
-    searchUrl = searchUrl.replace('{{key}}', encodeURIComponent(query))
-    searchUrl = searchUrl.replace('{key}', encodeURIComponent(query))
-
-    // Get parse rules - support both formats
-    const listRule = config.searchList || config.ruleSearch?.list || ''
-    const nameRule = config.searchName || config.ruleSearch?.name || ''
-    const authorRule = config.searchAuthor || config.ruleSearch?.author || ''
-    const coverRule = config.searchCover || config.ruleSearch?.cover || ''
-    const bookUrlRule = config.searchBookUrl || config.ruleSearch?.bookUrl || ''
-
-    if (!listRule) {
-      return []
-    }
+    const searchUrl = this.getSearchUrl(query)
+    if (!searchUrl) return []
 
     // Apply concurrent rate delay
-    const rate = config.concurrentRate as string | undefined
+    const rate = this.config.concurrentRate
     if (rate) {
       const delayMs = parseInt(rate, 10)
       if (delayMs > 0) {
@@ -126,26 +364,75 @@ export class SourceParser {
 
     try {
       const response = await retry(
-        () => this.httpClient.get(searchUrl),
-        3,
+        () => this.httpClient.get(searchUrl!),
+        2,
         1000
       )
 
-      const data = response.data
-      const list = this.parseRule(data, listRule)
+      const html = response.data as string
+      const config = this.config
 
-      if (!Array.isArray(list)) {
+      // Check for Cloudflare/人机验证
+      if (html.includes('Just a moment...') || html.includes('人机验证')) {
+        console.warn(`Source ${config.bookSourceName} requires CAPTCHA verification`)
         return []
       }
 
-      return list.map(item => ({
-        title: this.parseRule(item, nameRule) as string || '',
-        author: this.parseRule(item, authorRule) as string || '',
-        cover: this.parseRule(item, coverRule) as string || '',
-        bookUrl: this.parseRule(item, bookUrlRule) as string || '',
-        sourceName: config.bookSourceName,
-      }))
-    } catch {
+      // Get parse rules
+      const listRule = config.ruleSearch?.bookList || config.searchList || ''
+      const nameRule = config.ruleSearch?.name || config.searchName || ''
+      const authorRule = config.ruleSearch?.author || config.searchAuthor || ''
+      const coverRule = config.ruleSearch?.coverUrl || config.searchCover || ''
+      const bookUrlRule = config.ruleSearch?.bookUrl || config.searchBookUrl || ''
+
+      if (!listRule) return []
+
+      const $ = cheerio.load(html)
+
+      // Parse list - 阅读APP格式
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let listElements: any
+
+      if (listRule.startsWith('id.')) {
+        const id = listRule.slice(3).split('.')[0].split('@')[0]
+        const container = $(`#${id}`)
+        // id.xxx.0@tag.li → find tag.li inside
+        const subRule = listRule.split('@').slice(1).join('@') || 'tag.li'
+        listElements = this.selectElements(container, subRule)
+      } else if (listRule.startsWith('class.')) {
+        const cls = listRule.slice(6).split('.')[0].split('@')[0]
+        const container = $(`.${cls}`)
+        const subRule = listRule.split('@').slice(1).join('@') || 'tag.li'
+        listElements = this.selectElements(container, subRule)
+      } else {
+        listElements = this.selectElements($, listRule)
+      }
+
+      const results: SearchResult[] = []
+
+      listElements.each((_: number, el: any) => {
+        const itemHtml = $(el).html() || ''
+        const item$ = cheerio.load(itemHtml)
+
+        const title = this.parseRuleValue(itemHtml, nameRule) as string
+        const author = this.parseRuleValue(itemHtml, authorRule) as string
+        const cover = this.parseRuleValue(itemHtml, coverRule) as string
+        const bookUrl = this.parseRuleValue(itemHtml, bookUrlRule) as string
+
+        if (title && bookUrl) {
+          results.push({
+            title: title.trim(),
+            author: author.trim(),
+            cover: this.buildUrl(cover),
+            bookUrl: this.buildUrl(bookUrl),
+            sourceName: config.bookSourceName,
+          })
+        }
+      })
+
+      return results
+    } catch (error) {
+      console.error(`Search error for ${this.config.bookSourceName}:`, error)
       return []
     }
   }
@@ -154,109 +441,123 @@ export class SourceParser {
     title: string
     author: string
     description: string
+    cover: string
     chapters: Array<{ title: string; url: string }>
   }> {
-    const config = this.config as unknown as YckceoSourceConfig
+    const config = this.config
 
-    // Get book info URL
-    let infoUrl = config.bookInfoInit || config.bookSourceUrl || ''
-    infoUrl = infoUrl.replace('{{bookUrl}}', bookUrl)
-    infoUrl = infoUrl.replace('{bookUrl}', bookUrl)
+    // Book info URL
+    let infoUrl = config.ruleBookInfo?.init || config.bookInfoInit || bookUrl
+    infoUrl = infoUrl.replace(/{{bookUrl}}/g, bookUrl).replace(/{bookUrl}/g, bookUrl)
 
-    const nameRule = config.bookName || config.ruleBookInfo?.name || ''
-    const authorRule = config.bookAuthor || config.ruleBookInfo?.author || ''
-    const introRule = config.bookIntro || config.ruleBookInfo?.intro || ''
-    const chapterListRule = config.chapterList || config.ruleToc?.list || ''
-    const chapterNameRule = config.chapterName || config.ruleToc?.name || ''
-    const chapterUrlRule = config.chapterUrl || config.ruleToc?.chapterUrl || ''
+    // Handle JS wrapper in init rule
+    if (infoUrl.includes('<js>')) {
+      const urlMatch = infoUrl.match(/<\/js>(.+)$/)
+      if (urlMatch) {
+        infoUrl = urlMatch[1]
+      }
+    }
+
+    const fullUrl = this.buildUrl(infoUrl.startsWith('/') ? infoUrl : bookUrl)
 
     try {
       const response = await retry(
-        () => this.httpClient.get(infoUrl),
-        3,
+        () => this.httpClient.get(fullUrl),
+        2,
         1000
       )
 
-      const data = response.data
+      const html = response.data as string
+      const $ = cheerio.load(html)
 
-      const result = {
-        title: this.parseRule(data, nameRule) as string || '',
-        author: this.parseRule(data, authorRule) as string || '',
-        description: this.parseRule(data, introRule) as string || '',
-        chapters: [] as Array<{ title: string; url: string }>,
+      // Check for CAPTCHA
+      if (html.includes('Just a moment...')) {
+        return { title: '', author: '', description: '', cover: '', chapters: [] }
       }
+
+      const nameRule = config.ruleBookInfo?.name || config.bookName || ''
+      const authorRule = config.ruleBookInfo?.author || config.bookAuthor || ''
+      const introRule = config.ruleBookInfo?.intro || config.bookIntro || ''
+      const coverRule = config.ruleBookInfo?.coverUrl || config.bookCoverUrl || ''
+      const chapterListRule = config.ruleToc?.chapterList || config.chapterList || ''
+      const chapterNameRule = config.ruleToc?.chapterName || config.chapterName || ''
+      const chapterUrlRule = config.ruleToc?.chapterUrl || config.chapterUrl || ''
+
+      const title = this.parseRuleValue(html, nameRule) as string
+      const author = this.parseRuleValue(html, authorRule) as string
+      const description = this.parseRuleValue(html, introRule) as string
+      const cover = this.buildUrl(this.parseRuleValue(html, coverRule) as string)
+
+      // Parse chapters
+      const chapters: Array<{ title: string; url: string }> = []
 
       if (chapterListRule) {
-        const chapterList = this.parseRule(data, chapterListRule)
-        if (Array.isArray(chapterList)) {
-          result.chapters = chapterList.map(chapter => ({
-            title: this.parseRule(chapter, chapterNameRule) as string || '',
-            url: this.parseRule(chapter, chapterUrlRule) as string || '',
-          }))
-        }
+        const chapterElements = this.selectElements($, chapterListRule)
+        chapterElements.each((_: number, el: any) => {
+          const chapterHtml = $(el).html() || ''
+          const name = this.parseRuleValue(chapterHtml, chapterNameRule) as string
+          const url = this.parseRuleValue(chapterHtml, chapterUrlRule) as string
+          if (name && url) {
+            chapters.push({
+              title: name.trim(),
+              url: this.buildUrl(url),
+            })
+          }
+        })
       }
 
-      return result
-    } catch {
       return {
-        title: '',
-        author: '',
-        description: '',
-        chapters: [],
+        title: title.trim(),
+        author: author.trim(),
+        description: description.trim(),
+        cover,
+        chapters,
       }
+    } catch {
+      return { title: '', author: '', description: '', cover: '', chapters: [] }
     }
   }
 
   async parseChapterContent(chapterUrl: string): Promise<string> {
-    const config = this.config as unknown as YckceoSourceConfig
+    const config = this.config
 
-    let contentUrl = config.contentUrl || config.bookSourceUrl || ''
-    contentUrl = contentUrl.replace('{{chapterUrl}}', chapterUrl)
-    contentUrl = contentUrl.replace('{chapterUrl}', chapterUrl)
-
-    const contentRule = config.bookContent || config.ruleContent?.content || ''
+    const fullUrl = this.buildUrl(chapterUrl)
 
     try {
       const response = await retry(
-        () => this.httpClient.get(contentUrl),
-        3,
+        () => this.httpClient.get(fullUrl),
+        2,
         1000
       )
 
-      const data = response.data
-      const rawContent = this.parseRule(data, contentRule)
+      const html = response.data as string
 
-      return cleanContent(String(rawContent || ''), undefined)
+      // Check for CAPTCHA
+      if (html.includes('Just a moment...')) {
+        return '内容加载失败：需要人机验证'
+      }
+
+      const contentRule = config.ruleContent?.content || config.bookContent || ''
+      const replaceRegex = config.ruleContent?.replaceRegex || ''
+
+      let content = this.parseRuleValue(html, contentRule) as string
+
+      // Apply replace regex
+      if (replaceRegex) {
+        try {
+          // Format: ##pattern1##pattern2
+          const patterns = replaceRegex.split('##').filter(p => p)
+          for (const pattern of patterns) {
+            content = content.replace(new RegExp(pattern, 'g'), '')
+          }
+        } catch {
+          // Ignore regex errors
+        }
+      }
+
+      return cleanContent(content, undefined)
     } catch {
       return ''
-    }
-  }
-
-  // Parse using JSONPath or simple field access
-  private parseRule(data: unknown, rule: string): unknown {
-    if (!rule) return null
-
-    try {
-      // JSONPath
-      if (rule.startsWith('$')) {
-        const result = JSONPath({ path: rule, json: data as object })
-        return result.length === 1 ? result[0] : result
-      }
-
-      // XPath placeholder (not implemented)
-      if (rule.startsWith('/') || rule.startsWith('//')) {
-        // Would need HTML parser with XPath support
-        return null
-      }
-
-      // Simple field access
-      if (typeof data === 'object' && data !== null) {
-        return (data as Record<string, unknown>)[rule]
-      }
-
-      return null
-    } catch {
-      return null
     }
   }
 }
