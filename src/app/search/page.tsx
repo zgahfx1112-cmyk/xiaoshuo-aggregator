@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, Suspense, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   Box,
@@ -56,13 +56,28 @@ function SearchResultsContent() {
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
   const [searchProgress, setSearchProgress] = useState<{ current: number; total: number } | null>(null)
 
+  const abortControllerRef = useRef<AbortController | null>(null)
+
   useEffect(() => {
     if (query.trim()) {
       performSearch(query, page)
     }
+    // Cleanup: cancel pending requests on unmount
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+    }
   }, [query, page])
 
   const performSearch = async (q: string, p: number) => {
+    // Cancel previous search if still running
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    abortControllerRef.current = new AbortController()
+    const signal = abortControllerRef.current.signal
+
     setLoading(true)
     setError(null)
     setSelectedSourceId(null)
@@ -89,6 +104,9 @@ function SearchResultsContent() {
     const allSourceStats: SourceStat[] = []
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      // Check if request was aborted
+      if (signal.aborted) break
+
       setSearchProgress({ current: batchIndex + 1, total: batches.length })
 
       const batch = batches[batchIndex]
@@ -96,7 +114,7 @@ function SearchResultsContent() {
       try {
         const response = await fetch('/api/search', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
           body: JSON.stringify({
             query: q,
             page: 1,
@@ -105,8 +123,11 @@ function SearchResultsContent() {
               sourceName: s.sourceName,
               config: s.config
             }))
-          })
+          }),
+          signal
         })
+
+        if (signal.aborted) break
 
         const data = await response.json()
 
@@ -119,12 +140,14 @@ function SearchResultsContent() {
           setTotal(allResults.length)
           setSourceStats([...allSourceStats])
         }
-      } catch {
+      } catch (err) {
+        // Ignore abort errors
+        if (err instanceof Error && err.name === 'AbortError') break
         // Batch failed, continue to next
       }
 
       // Small delay between batches to avoid overwhelming server
-      if (batchIndex < batches.length - 1) {
+      if (batchIndex < batches.length - 1 && !signal.aborted) {
         await new Promise(resolve => setTimeout(resolve, 500))
       }
     }
@@ -132,7 +155,7 @@ function SearchResultsContent() {
     setSearchProgress(null)
     setLoading(false)
 
-    if (allResults.length === 0) {
+    if (!signal.aborted && allResults.length === 0) {
       setError('所有书源均无结果')
     }
   }
@@ -142,7 +165,10 @@ function SearchResultsContent() {
     ? results.filter(r => r.sourceId === selectedSourceId)
     : results
 
-  const displayResults = filteredResults
+  // Client-side pagination (slice for current page)
+  const pageSize = 20
+  const startIndex = (page - 1) * pageSize
+  const displayResults = filteredResults.slice(startIndex, startIndex + pageSize)
   const displayTotal = filteredResults.length
 
   const handleSearch = (e: React.FormEvent) => {
@@ -270,7 +296,7 @@ function SearchResultsContent() {
             </Grid>
 
             {/* 分页 */}
-            {Math.ceil(displayTotal / 20) > 1 && (
+            {Math.ceil(displayTotal / pageSize) > 1 && (
               <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1, mt: 3 }}>
                 {page > 1 && (
                   <Link href={buildPageUrl(page - 1)} passHref legacyBehavior>
@@ -279,10 +305,10 @@ function SearchResultsContent() {
                 )}
 
                 <Typography sx={{ py: 1 }}>
-                  第 {page} / {Math.ceil(displayTotal / 20)} 页
+                  第 {page} / {Math.ceil(displayTotal / pageSize)} 页
                 </Typography>
 
-                {page < Math.ceil(displayTotal / 20) && (
+                {page < Math.ceil(displayTotal / pageSize) && (
                   <Link href={buildPageUrl(page + 1)} passHref legacyBehavior>
                     <Paper sx={{ px: 2, py: 1, cursor: 'pointer' }}>下一页</Paper>
                   </Link>

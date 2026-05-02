@@ -340,9 +340,8 @@ export class SourceParser {
       // e.g., "tag.p.1" → typePrefix="tag.p", index=1
       // e.g., "class.itemtxt" → typePrefix="class.itemtxt", index=null
       const indexMatch = part.match(/\.\d+$/)
-      const matchIndex = indexMatch?.index ?? 0
-      const index = indexMatch ? parseInt(part.slice(matchIndex + 1), 10) : null
-      const typePart = indexMatch ? part.slice(0, matchIndex) : part
+      const index = indexMatch ? parseInt(indexMatch[0].slice(1), 10) : null
+      const typePart = indexMatch ? part.slice(0, -indexMatch[0].length) : part
 
       // Handle type prefix and find elements
       if (typePart.startsWith('id.')) {
@@ -417,9 +416,11 @@ export class SourceParser {
       searchUrl = jsMatch[1]
     }
 
-    // Replace placeholders
-    searchUrl = searchUrl.replace(/{{key}}/g, encodeURIComponent(query))
-    searchUrl = searchUrl.replace(/{key}/g, encodeURIComponent(query))
+    // Replace placeholders - use encodeURIComponent for proper URL encoding
+    const encodedQuery = encodeURIComponent(query)
+
+    searchUrl = searchUrl.replace(/{{key}}/g, encodedQuery)
+    searchUrl = searchUrl.replace(/{key}/g, encodedQuery)
     searchUrl = searchUrl.replace(/{{page}}/g, '1')
     searchUrl = searchUrl.replace(/{page}/g, '1')
 
@@ -447,13 +448,15 @@ export class SourceParser {
         1000
       )
 
-      const html = response.data as string
+      const responseData = response.data
       const config = this.config
 
-      // Check for Cloudflare/人机验证
-      if (html.includes('Just a moment...') || html.includes('人机验证')) {
-        console.warn(`Source ${config.bookSourceName} requires CAPTCHA verification`)
-        return []
+      // Check for Cloudflare/人机验证 in HTML response
+      if (typeof responseData === 'string') {
+        if (responseData.includes('Just a moment...') || responseData.includes('人机验证')) {
+          console.warn(`Source ${config.bookSourceName} requires CAPTCHA verification`)
+          return []
+        }
       }
 
       // Get parse rules
@@ -465,6 +468,75 @@ export class SourceParser {
 
       if (!listRule) return []
 
+      // Handle JSON API responses (sources like 69书吧 return JSON with bookList: "data")
+      if (typeof responseData === 'object' && responseData !== null) {
+        const jsonData = responseData as Record<string, unknown>
+
+        // Get list from JSONPath or field name
+        let listData: unknown[] = []
+        if (listRule.startsWith('$')) {
+          const listResult = JSONPath({ path: listRule, json: jsonData })
+          listData = Array.isArray(listResult) ? listResult : [listResult]
+        } else {
+          const listField = (jsonData as Record<string, unknown>)[listRule]
+          listData = Array.isArray(listField) ? listField : [listField]
+        }
+
+        const results: SearchResult[] = []
+        for (const item of listData) {
+          if (typeof item !== 'object' || item === null) continue
+
+          const itemObj = item as Record<string, unknown>
+
+          // Parse each field from JSON
+          let title: string
+          let author: string
+          let cover: string
+          let bookUrl: string
+
+          if (nameRule.startsWith('$')) {
+            const nameResult = JSONPath({ path: nameRule, json: itemObj })
+            title = String(nameResult[0] || '')
+          } else {
+            title = String(itemObj[nameRule] || '')
+          }
+
+          if (authorRule.startsWith('$')) {
+            const authorResult = JSONPath({ path: authorRule, json: itemObj })
+            author = String(authorResult[0] || '')
+          } else {
+            author = String(itemObj[authorRule] || '')
+          }
+
+          if (coverRule.startsWith('$')) {
+            const coverResult = JSONPath({ path: coverRule, json: itemObj })
+            cover = String(coverResult[0] || '')
+          } else {
+            cover = String(itemObj[coverRule] || '')
+          }
+
+          if (bookUrlRule.startsWith('$')) {
+            const urlResult = JSONPath({ path: bookUrlRule, json: itemObj })
+            bookUrl = String(urlResult[0] || '')
+          } else {
+            bookUrl = String(itemObj[bookUrlRule] || '')
+          }
+
+          if (title && bookUrl) {
+            results.push({
+              title: title.trim(),
+              author: author.trim(),
+              cover: this.buildUrl(cover),
+              bookUrl: this.buildUrl(bookUrl),
+              sourceName: config.bookSourceName,
+            })
+          }
+        }
+        return results
+      }
+
+      // Handle HTML response
+      const html = responseData as string
       const $ = cheerio.load(html)
 
       // Parse list - 阅读APP格式

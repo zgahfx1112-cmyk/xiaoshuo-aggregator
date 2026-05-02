@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cacheGet, cacheSet, CacheKeys, CacheTTL } from '@/lib/redis'
 import { SourceParser, SourceConfigInput } from '@/lib/sourceParser'
 import { SearchResult } from '@/lib/types'
 import { applyRateLimit } from '@/lib/rateLimit'
@@ -53,7 +52,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<SearchApi
   }
 
   try {
-    const body = await request.json()
+    // Parse request body as UTF-8 text then JSON
+    const bodyText = await request.text()
+    const body = JSON.parse(bodyText)
     const query = body.query
     const page = parseInt(body.page || '1', 10)
     const customSources = body.customSources
@@ -86,27 +87,6 @@ async function executeSearch(
   const normalizedQuery = query.trim().toLowerCase()
 
   try {
-    // Check cache first
-    const cacheKey = `${CacheKeys.searchResults(normalizedQuery)}:sources`
-    const cached = await cacheGet<SearchApiResponse['data']>(cacheKey)
-
-    if (cached) {
-      // Paginate cached results
-      const pageSize = 20
-      const startIndex = (page - 1) * pageSize
-      const paginatedResults = cached.novels.slice(startIndex, startIndex + pageSize)
-
-      return NextResponse.json({
-        success: true,
-        data: {
-          novels: paginatedResults,
-          total: cached.total,
-          page,
-          sources: cached.sources,
-        },
-      })
-    }
-
     // Get sources from client request
     let sourcesToUse: Array<{ id: string; name: string; config: object }> = []
 
@@ -129,7 +109,7 @@ async function executeSearch(
 
     // Search sources sequentially, collect results per source
     const allResults: SearchResult[] = []
-    const sourceStats: Array<{ id: string; name: string; resultCount: number }> = []
+    const sourceStats: Array<{ id: string; name: string; resultCount: number; error?: string }> = []
 
     for (const source of sourcesToUse) {
       try {
@@ -150,12 +130,13 @@ async function executeSearch(
             sourceId: source.id,
           })
         })
-      } catch {
+      } catch (err) {
         // Source failed, continue to next
         sourceStats.push({
           id: source.id,
           name: source.name,
           resultCount: 0,
+          error: err instanceof Error ? err.message : 'Unknown error',
         })
       }
     }
@@ -177,29 +158,42 @@ async function executeSearch(
       return 0
     })
 
-    const responseData = {
-      novels: allResults,
-      total: allResults.length,
-      page: 1,
-      sources: sourceStats,
-    }
-
-    // Cache results for 15 minutes
-    await cacheSet(cacheKey, responseData, CacheTTL.SHORT)
+    // Deduplicate by title + author + sourceId
+    const seen = new Set<string>()
+    const dedupedResults = allResults.filter(r => {
+      const key = `${r.title}|${r.author}|${r.sourceId}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
 
     // Paginate for current request
     const pageSize = 20
     const startIndex = (page - 1) * pageSize
-    const paginatedResults = allResults.slice(startIndex, startIndex + pageSize)
+    const paginatedResults = dedupedResults.slice(startIndex, startIndex + pageSize)
+
+    // Determine error message
+    let errorMessage: string | undefined
+    if (dedupedResults.length === 0) {
+      const failedSources = sourceStats.filter(s => s.error)
+      if (failedSources.length === sourcesToUse.length) {
+        errorMessage = '所有书源搜索失败，请检查书源配置或网络连接'
+      } else if (failedSources.length > 0) {
+        errorMessage = `部分书源失败(${failedSources.length}/${sourcesToUse.length})，其他书源无结果`
+      } else {
+        errorMessage = '未找到相关小说'
+      }
+    }
 
     return NextResponse.json({
       success: true,
       data: {
         novels: paginatedResults,
-        total: allResults.length,
+        total: dedupedResults.length,
         page,
         sources: sourceStats,
       },
+      error: errorMessage,
     })
   } catch (error) {
     console.error('Search error:', error)
