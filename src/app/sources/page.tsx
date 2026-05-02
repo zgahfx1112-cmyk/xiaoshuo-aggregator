@@ -157,7 +157,7 @@ export default function SourcesPage() {
       try {
         const response = await fetch('/api/sources/test', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
           body: JSON.stringify({ sourceConfig: source.config }),
         })
 
@@ -291,7 +291,7 @@ export default function SourcesPage() {
     try {
       const response = await fetch('/api/sources/test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
         body: JSON.stringify({ sourceConfig: source.config }),
       })
 

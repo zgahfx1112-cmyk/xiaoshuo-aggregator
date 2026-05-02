@@ -10,7 +10,10 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { sourceConfig } = await request.json()
+    // Parse request body as UTF-8 text then JSON
+    const bodyText = await request.text()
+    const body = JSON.parse(bodyText)
+    const { sourceConfig } = body
 
     if (!sourceConfig) {
       return NextResponse.json({
@@ -19,7 +22,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    // Test with common search term
+    // Test with common search term (UTF-8 encoded)
     const parser = new SourceParser(sourceConfig as SourceConfigInput)
     const results = await parser.parseSearch('斗罗大陆')
 
