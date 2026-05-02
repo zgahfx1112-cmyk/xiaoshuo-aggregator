@@ -40,6 +40,10 @@ export interface UserSourceConfig {
   isCustom: boolean
   groupId?: string // 所属分组
   config?: object
+  // 可用性测试结果
+  available?: boolean      // 是否可用（测试通过）
+  lastTestedAt?: string    // 最后测试时间
+  resultCount?: number     // 测试结果数量
 }
 
 // 书源分组
@@ -81,6 +85,9 @@ interface BookshelfContextType {
   setSourceGroup: (sourceId: string, groupId: string | undefined) => void
   getSourcesByGroup: (groupId: string) => UserSourceConfig[]
   getGroupByName: (name: string) => SourceGroup | undefined
+  // 可用性测试
+  updateSourceAvailability: (sourceId: string, available: boolean, resultCount?: number) => void
+  updateMultipleSourceAvailability: (results: Array<{ sourceId: string; available: boolean; resultCount?: number }>) => void
 }
 
 const BOOKSHELF_STORAGE_KEY = 'xiaoshuo_bookshelf'
@@ -269,6 +276,41 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
     return sourceGroups.find(g => g.name === name)
   }, [sourceGroups])
 
+  // 更新书源可用状态
+  const updateSourceAvailability = useCallback((
+    sourceId: string,
+    available: boolean,
+    resultCount?: number
+  ) => {
+    setUserSourceConfigs((prev) =>
+      prev.map((s) => s.sourceId === sourceId
+        ? { ...s, available, lastTestedAt: new Date().toISOString(), resultCount }
+        : s
+      )
+    )
+  }, [])
+
+  // 批量更新书源可用状态
+  const updateMultipleSourceAvailability = useCallback((
+    results: Array<{ sourceId: string; available: boolean; resultCount?: number }>
+  ) => {
+    const updates = new Map(results.map(r => [r.sourceId, r]))
+    setUserSourceConfigs((prev) =>
+      prev.map((s) => {
+        const update = updates.get(s.sourceId)
+        if (update) {
+          return {
+            ...s,
+            available: update.available,
+            lastTestedAt: new Date().toISOString(),
+            resultCount: update.resultCount
+          }
+        }
+        return s
+      })
+    )
+  }, [])
+
   const value = useMemo(
     () => ({
       bookshelf,
@@ -291,6 +333,8 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
       setSourceGroup,
       getSourcesByGroup,
       getGroupByName,
+      updateSourceAvailability,
+      updateMultipleSourceAvailability,
     }),
     [
       bookshelf,
@@ -313,6 +357,8 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
       setSourceGroup,
       getSourcesByGroup,
       getGroupByName,
+      updateSourceAvailability,
+      updateMultipleSourceAvailability,
     ]
   )
 

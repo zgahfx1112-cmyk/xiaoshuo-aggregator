@@ -34,6 +34,7 @@ import {
   Divider,
   Tab,
   Tabs,
+  LinearProgress,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import FileDownloadIcon from '@mui/icons-material/FileDownload'
@@ -43,6 +44,9 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import Switch from '@mui/material/Switch'
 import GroupIcon from '@mui/icons-material/Group'
 import { useBookshelf, UserSourceConfig, SourceGroup } from '@/hooks/useBookshelf'
+import CheckCircleIcon from '@mui/icons-material/CheckCircle'
+import CancelIcon from '@mui/icons-material/Cancel'
+import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked'
 
 export default function SourcesPage() {
   const {
@@ -58,6 +62,8 @@ export default function SourcesPage() {
     setSourceGroup,
     getSourcesByGroup,
     getGroupByName,
+    updateSourceAvailability,
+    updateMultipleSourceAvailability,
   } = useBookshelf()
 
   const [importDialogOpen, setImportDialogOpen] = useState(false)
@@ -75,6 +81,8 @@ export default function SourcesPage() {
   const [testingSources, setTestingSources] = useState<Set<string>>(new Set())
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set())
   const [currentTab, setCurrentTab] = useState(0) // 0: all, 1-n: groups
+  const [testAfterImport, setTestAfterImport] = useState(false) // 导入后测试
+  const [batchTestProgress, setBatchTestProgress] = useState<{ current: number; total: number } | null>(null) // 批量测试进度
 
   const showSnackbar = (message: string, severity: 'success' | 'error' | 'info') => {
     setSnackbar({ open: true, message, severity })
@@ -140,40 +148,45 @@ export default function SourcesPage() {
     setSelectedSources(new Set())
   }
 
-  // 批量测试
+  // 批量测试（使用批量测试 API）
   const handleBatchTest = async () => {
     if (selectedSources.size === 0) {
       showSnackbar('请先选择书源', 'error')
       return
     }
 
-    const sourcesToTest = displayedSources.filter(s => selectedSources.has(s.sourceId))
-    setTestingSources(new Set(selectedSources))
+    const sourcesToTest = displayedSources.filter(s => selectedSources.has(s.sourceId) && s.config)
+    setBatchTestProgress({ current: 0, total: sourcesToTest.length })
 
-    let available = 0
-    let unavailable = 0
+    try {
+      const response = await fetch('/api/sources/batch-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({
+          sources: sourcesToTest.map(s => ({
+            sourceId: s.sourceId,
+            config: s.config
+          })),
+          concurrency: 5
+        }),
+      })
 
-    for (const source of sourcesToTest) {
-      try {
-        const response = await fetch('/api/sources/test', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json; charset=utf-8' },
-          body: JSON.stringify({ sourceConfig: source.config }),
-        })
+      const data = await response.json()
+      if (data.success) {
+        // 更新可用状态
+        updateMultipleSourceAvailability(data.data)
 
-        const data = await response.json()
-        if (data.success && data.data.available) {
-          available++
-        } else {
-          unavailable++
-        }
-      } catch {
-        unavailable++
+        const available = data.data.filter((r: { available: boolean }) => r.available).length
+        const unavailable = data.data.length - available
+        showSnackbar(`测试完成：可用 ${available}，不可用 ${unavailable}`, 'info')
+      } else {
+        showSnackbar('批量测试失败: ' + data.error, 'error')
       }
+    } catch {
+      showSnackbar('批量测试失败', 'error')
+    } finally {
+      setBatchTestProgress(null)
     }
-
-    setTestingSources(new Set())
-    showSnackbar(`测试完成：可用 ${available}，不可用 ${unavailable}`, 'info')
   }
 
   // 导入书源
@@ -192,20 +205,22 @@ export default function SourcesPage() {
         if (!response.ok) {
           const errorData = await response.json()
           showSnackbar('获取书源失败: ' + (errorData.error || response.status), 'error')
+          setImporting(false)
           return
         }
 
         const data = await response.json()
         if (!data.success) {
           showSnackbar('获取书源失败: ' + data.error, 'error')
+          setImporting(false)
           return
         }
 
         const config = data.data
-        importConfigs(Array.isArray(config) ? config : [config])
+        await importConfigs(Array.isArray(config) ? config : [config])
       } else {
         const config = JSON.parse(importJson)
-        importConfigs(Array.isArray(config) ? config : [config])
+        await importConfigs(Array.isArray(config) ? config : [config])
       }
     } catch (error) {
       if (error instanceof SyntaxError) {
@@ -218,7 +233,7 @@ export default function SourcesPage() {
     }
   }
 
-  const importConfigs = (configs: Array<Record<string, unknown>>) => {
+  const importConfigs = async (configs: Array<Record<string, unknown>>) => {
     const userSelectedGroupId = currentTab > 0 ? sourceGroups[currentTab - 1]?.id : undefined
 
     // 收集所有分组名称（仅当用户未选择分组时才自动创建）
@@ -280,12 +295,42 @@ export default function SourcesPage() {
       showSnackbar(`成功导入 ${newSources.length} 个书源${groupMsg}`, 'success')
       setImportDialogOpen(false)
       setImportJson('')
+
+      // 如果选择导入后测试
+      if (testAfterImport) {
+        setBatchTestProgress({ current: 0, total: newSources.length })
+        try {
+          const response = await fetch('/api/sources/batch-test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json; charset=utf-8' },
+            body: JSON.stringify({
+              sources: newSources.filter(s => s.config).map(s => ({
+                sourceId: s.sourceId,
+                config: s.config
+              })),
+              concurrency: 5
+            }),
+          })
+
+          const data = await response.json()
+          if (data.success) {
+            updateMultipleSourceAvailability(data.data)
+            const available = data.data.filter((r: { available: boolean }) => r.available).length
+            showSnackbar(`测试完成：可用 ${available}/${newSources.length}`, 'info')
+          }
+        } catch {
+          showSnackbar('批量测试失败', 'error')
+        } finally {
+          setBatchTestProgress(null)
+          setTestAfterImport(false)
+        }
+      }
     } else {
       showSnackbar('没有有效的书源配置', 'error')
     }
   }
 
-  // 单个测试
+  // 单个测试（更新可用状态）
   const handleTestSource = async (source: UserSourceConfig) => {
     setTestingSources(new Set([...testingSources, source.sourceId]))
     try {
@@ -297,6 +342,7 @@ export default function SourcesPage() {
 
       const data = await response.json()
       if (data.success) {
+        updateSourceAvailability(source.sourceId, data.data.available, data.data.resultCount)
         showSnackbar(data.data.message, data.data.available ? 'success' : 'error')
       } else {
         showSnackbar('测试失败: ' + data.error, 'error')
@@ -356,6 +402,8 @@ export default function SourcesPage() {
   // 统计
   const totalCount = userSourceConfigs.filter(s => s.isCustom).length
   const enabledCount = userSourceConfigs.filter(s => s.enabled && s.isCustom).length
+  const availableCount = userSourceConfigs.filter(s => s.available === true && s.isCustom).length
+  const testedCount = userSourceConfigs.filter(s => s.lastTestedAt && s.isCustom).length
 
   return (
     <Box sx={{ pb: 7 }}>
@@ -372,6 +420,14 @@ export default function SourcesPage() {
           <Paper sx={{ p: 1.5, minWidth: 100 }}>
             <Typography variant="body2" color="text.secondary">已启用</Typography>
             <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'success.main' }}>{enabledCount}</Typography>
+          </Paper>
+          <Paper sx={{ p: 1.5, minWidth: 100 }}>
+            <Typography variant="body2" color="text.secondary">可用</Typography>
+            <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'primary.main' }}>{availableCount}</Typography>
+          </Paper>
+          <Paper sx={{ p: 1.5, minWidth: 100 }}>
+            <Typography variant="body2" color="text.secondary">已测试</Typography>
+            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>{testedCount}</Typography>
           </Paper>
           <Paper sx={{ p: 1.5, minWidth: 100 }}>
             <Typography variant="body2" color="text.secondary">总数</Typography>
@@ -441,6 +497,7 @@ export default function SourcesPage() {
                   />
                 </TableCell>
                 <TableCell>名称</TableCell>
+                <TableCell>状态</TableCell>
                 <TableCell>启用</TableCell>
                 <TableCell>分组</TableCell>
                 <TableCell>操作</TableCell>
@@ -449,7 +506,7 @@ export default function SourcesPage() {
             <TableBody>
               {displayedSources.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} align="center">
+                  <TableCell colSpan={6} align="center">
                     <Typography color="text.secondary">
                       {currentTab === 0 ? '暂无书源，点击"导入书源"添加' : '该分组暂无书源'}
                     </Typography>
@@ -465,6 +522,17 @@ export default function SourcesPage() {
                       />
                     </TableCell>
                     <TableCell>{source.sourceName}</TableCell>
+                    <TableCell>
+                      <Tooltip title={source.lastTestedAt ? `最后测试: ${new Date(source.lastTestedAt).toLocaleString()}` : '未测试'}>
+                        {source.available === true ? (
+                          <CheckCircleIcon color="success" fontSize="small" />
+                        ) : source.available === false ? (
+                          <CancelIcon color="error" fontSize="small" />
+                        ) : (
+                          <RadioButtonUncheckedIcon color="disabled" fontSize="small" />
+                        )}
+                      </Tooltip>
+                    </TableCell>
                     <TableCell>
                       <Switch
                         checked={source.enabled}
@@ -539,11 +607,29 @@ export default function SourcesPage() {
               placeholder='粘贴书源JSON配置，或输入书源JSON文件URL（如：https://www.yckceo.com/yuedu/shuyuans/json/id/1107.json）'
               sx={{ fontFamily: 'monospace' }}
             />
+            <Box sx={{ mt: 2, display: 'flex', alignItems: 'center' }}>
+              <Checkbox
+                checked={testAfterImport}
+                onChange={(e) => setTestAfterImport(e.target.checked)}
+              />
+              <Typography variant="body2">导入后自动测试书源可用性</Typography>
+            </Box>
+            {batchTestProgress && (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="body2" color="primary">
+                  测试进度: {batchTestProgress.current}/{batchTestProgress.total}
+                </Typography>
+                <LinearProgress
+                  variant="determinate"
+                  value={(batchTestProgress.current / batchTestProgress.total) * 100}
+                />
+              </Box>
+            )}
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setImportDialogOpen(false)}>取消</Button>
-            <Button variant="contained" onClick={handleImport} disabled={importing} startIcon={importing ? <CircularProgress size={16} /> : null}>
-              {importing ? '导入中...' : '导入'}
+            <Button variant="contained" onClick={handleImport} disabled={importing || batchTestProgress !== null} startIcon={importing ? <CircularProgress size={16} /> : null}>
+              {importing ? '导入中...' : batchTestProgress ? '测试中...' : '导入'}
             </Button>
           </DialogActions>
         </Dialog>
