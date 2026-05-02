@@ -75,6 +75,8 @@ export class SourceParser {
   private config: YckceoSourceConfig
   private httpClient: AxiosInstance
   private baseUrl: string
+  // 变量存储表（用于 @put/@get）
+  private variables: Record<string, string> = {}
 
   constructor(config: SourceConfigInput) {
     this.config = config as YckceoSourceConfig
@@ -155,6 +157,7 @@ export class SourceParser {
     // - class.title.0@text → first .title element text
     // - //meta[@property='og:title']/@content → XPath (simplified)
     // - @css:.title@text → CSS selector
+    // - [property$=book_name]@content → CSS attribute selector
 
     let result: string | string[] = ''
 
@@ -164,6 +167,20 @@ export class SourceParser {
       const attrMatch = selector.match(/@(.+)$/)
       const attr = attrMatch ? attrMatch[1] : 'text'
       const sel = attrMatch ? selector.slice(0, -attrMatch[0].length) : selector
+
+      const elements = $(sel)
+      if (elements.length > 0) {
+        result = attr === 'text' || attr === 'textNodes'
+          ? elements.text()
+          : elements.attr(attr) || ''
+      }
+    }
+    // CSS attribute selector: [property$=xxx], [property="xxx"], [class~="xxx"]
+    else if (cleanRule.startsWith('[property') || cleanRule.startsWith('[class') || cleanRule.startsWith('[id')) {
+      // 分离选择器和属性
+      const attrMatch = cleanRule.match(/@(\w+)$/)
+      const attr = attrMatch ? attrMatch[1] : 'content'
+      const sel = attrMatch ? cleanRule.slice(0, -attrMatch[0].length) : cleanRule
 
       const elements = $(sel)
       if (elements.length > 0) {
@@ -221,11 +238,16 @@ export class SourceParser {
     // Remove JS suffix like @js:java.t2s(result)
     let cleanRule = rule.split('@js:')[0].split('<js>')[0]
 
-    // Remove ##replace patterns
-    cleanRule = cleanRule.split('##')[0]
+    // 分离选择器和正则替换规则
+    // 格式: selector##pattern##replace### 或 selector##pattern（删除）
+    const replaceParts = cleanRule.split('###')
+    const mainRule = replaceParts[0]
+
+    // 提取选择器部分（不含 ## 后的替换）
+    const selectorPart = mainRule.split('##')[0]
 
     // Handle rules starting from the element itself
-    const parts = cleanRule.split('@')
+    const parts = selectorPart.split('@')
     const lastPart = parts[parts.length - 1]
 
     // Check if last part is an attribute
@@ -279,13 +301,57 @@ export class SourceParser {
     }
 
     // Get attribute/text
+    let result = ''
     if (attr === 'text' || attr === 'textNodes') {
-      return current.text().trim()
+      result = current.text().trim()
+    } else if (attr === 'html') {
+      result = current.html() || ''
+    } else {
+      result = current.attr(attr) || ''
     }
-    if (attr === 'html') {
-      return current.html() || ''
+
+    // 应用正则替换规则
+    result = this.applyRegexReplace(result, rule)
+
+    return result
+  }
+
+  // 应用正则替换规则
+  // 格式: selector##pattern##replace### 或 ##pattern1##pattern2（删除）
+  private applyRegexReplace(value: string, rule: string): string {
+    if (!rule.includes('##')) return value
+
+    // 分离所有 ### 部分
+    const sections = rule.split('###')
+
+    for (const section of sections) {
+      const segments = section.split('##').filter(s => s)
+
+      if (segments.length < 2) {
+        // 只有选择器，无替换
+        continue
+      } else if (segments.length === 2) {
+        // ##pattern → 删除匹配内容
+        const pattern = segments[1]
+        try {
+          value = value.replace(new RegExp(pattern, 'g'), '')
+        } catch {
+          // 正则错误，忽略
+        }
+      } else if (segments.length >= 3) {
+        // selector##pattern##replace
+        const pattern = segments[1]
+        const replace = segments[2]
+        try {
+          // 支持替换中的 $1, $2 等捕获组
+          value = value.replace(new RegExp(pattern, 'g'), replace)
+        } catch {
+          // 正则错误，忽略
+        }
+      }
     }
-    return current.attr(attr) || ''
+
+    return value
   }
 
   // Select elements by 阅读APP rule format
@@ -403,6 +469,53 @@ export class SourceParser {
     if (url.startsWith('http')) return url
     if (url.startsWith('/')) return this.baseUrl + url
     return this.baseUrl + '/' + url
+  }
+
+  // Parse @put:{n:"rule",a:"rule"} 中的键值对
+  private parsePutPairs(content: string): Array<[string, string]> {
+    const pairs: Array<[string, string]> = []
+    // 格式：n:"[property$=book_name]@content",a:"rule",k:"rule",l:"rule",i:"rule",c:"rule"
+    // 使用正则提取 key:"value" 对，支持转义引号
+    const regex = /([a-zA-Z]):"((?:[^"\\]|\\.)*)"/g
+    let match
+    while ((match = regex.exec(content)) !== null) {
+      // 处理转义字符
+      const value = match[2].replace(/\\(.)/g, '$1')
+      pairs.push([match[1], value])
+    }
+    return pairs
+  }
+
+  // 解析 @get:{n} 中的键名
+  private parseGetKey(rule: string): string {
+    const match = rule.match(/@get:\{([a-zA-Z])\}/)
+    return match ? match[1] : ''
+  }
+
+  // 执行 @put 规则，存储变量
+  private executePutRules(html: string, putRule: string): void {
+    const putContent = putRule.match(/@put:\{(.+)\}/)?.[1]
+    if (!putContent) return
+
+    const pairs = this.parsePutPairs(putContent)
+    for (const [key, rule] of pairs) {
+      const value = this.parseRuleValue(html, rule) as string
+      this.variables[key] = value.trim()
+    }
+  }
+
+  // 获取变量值或执行规则
+  private getValueOrVariable(html: string, rule: string): string {
+    if (!rule) return ''
+
+    // 检查是否是 @get 规则
+    if (rule.startsWith('@get:')) {
+      const key = this.parseGetKey(rule)
+      return this.variables[key] || ''
+    }
+
+    // 执行普通规则
+    return this.parseRuleValue(html, rule) as string
   }
 
   // Extract search URL from config (handle JS code wrapper)
@@ -614,15 +727,26 @@ export class SourceParser {
   }> {
     const config = this.config
 
-    // Book info URL
-    let infoUrl = config.ruleBookInfo?.init || config.bookInfoInit || bookUrl
-    infoUrl = infoUrl.replace(/{{bookUrl}}/g, bookUrl).replace(/{bookUrl}/g, bookUrl)
+    // 清空变量表
+    this.variables = {}
 
-    // Handle JS wrapper in init rule
-    if (infoUrl.includes('<js>')) {
-      const urlMatch = infoUrl.match(/<\/js>(.+)$/)
-      if (urlMatch) {
-        infoUrl = urlMatch[1]
+    // Book info URL - 先检查 init 是否是 @put 规则
+    const initRule = config.ruleBookInfo?.init || config.bookInfoInit || ''
+
+    // 如果 init 是 @put 规则，需要先获取 HTML 执行
+    let infoUrl = bookUrl
+    let isPutRule = initRule.startsWith('@put:')
+
+    if (!isPutRule) {
+      infoUrl = initRule || bookUrl
+      infoUrl = infoUrl.replace(/{{bookUrl}}/g, bookUrl).replace(/{bookUrl}/g, bookUrl)
+
+      // Handle JS wrapper in init rule
+      if (infoUrl.includes('<js>')) {
+        const urlMatch = infoUrl.match(/<\/js>(.+)$/)
+        if (urlMatch) {
+          infoUrl = urlMatch[1]
+        }
       }
     }
 
@@ -643,6 +767,11 @@ export class SourceParser {
         return { title: '', author: '', description: '', cover: '', chapters: [] }
       }
 
+      // 执行 @put 规则（如果 init 是 @put）
+      if (isPutRule) {
+        this.executePutRules(html, initRule)
+      }
+
       const nameRule = config.ruleBookInfo?.name || config.bookName || ''
       const authorRule = config.ruleBookInfo?.author || config.bookAuthor || ''
       const introRule = config.ruleBookInfo?.intro || config.bookIntro || ''
@@ -651,10 +780,11 @@ export class SourceParser {
       const chapterNameRule = config.ruleToc?.chapterName || config.chapterName || ''
       const chapterUrlRule = config.ruleToc?.chapterUrl || config.chapterUrl || ''
 
-      const title = this.parseRuleValue(html, nameRule) as string
-      const author = this.parseRuleValue(html, authorRule) as string
-      const description = this.parseRuleValue(html, introRule) as string
-      const cover = this.buildUrl(this.parseRuleValue(html, coverRule) as string)
+      // 使用 getValueOrVariable 支持 @get 规则
+      const title = this.getValueOrVariable(html, nameRule) as string
+      const author = this.getValueOrVariable(html, authorRule) as string
+      const description = this.getValueOrVariable(html, introRule) as string
+      const cover = this.buildUrl(this.getValueOrVariable(html, coverRule) as string)
 
       // Parse chapters
       const chapters: Array<{ title: string; url: string }> = []
@@ -662,9 +792,9 @@ export class SourceParser {
       if (chapterListRule) {
         const chapterElements = this.selectElements($, chapterListRule)
         chapterElements.each((_: number, el: any) => {
-          const chapterHtml = $(el).html() || ''
-          const name = this.parseRuleValue(chapterHtml, chapterNameRule) as string
-          const url = this.parseRuleValue(chapterHtml, chapterUrlRule) as string
+          const chapterEl = $(el)
+          const name = this.parseRuleValueFromElement($, chapterEl, chapterNameRule) as string
+          const url = this.parseRuleValueFromElement($, chapterEl, chapterUrlRule) as string
           if (name && url) {
             chapters.push({
               title: name.trim(),
