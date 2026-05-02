@@ -242,78 +242,39 @@ export class SourceParser {
       const part = selectorParts[i]
       if (!part) continue
 
-      // Handle class.xxx → .xxx (but skip if it's the item class itself)
-      if (part.startsWith('class.')) {
-        const cls = part.slice(6)
-        const indexMatch = cls.match(/\.\d+$/)
-        const clsName = indexMatch ? cls.slice(0, -indexMatch[0].length) : cls
-        const idx = indexMatch ? parseInt(cls.slice(-indexMatch[0].length + 1), 10) : null
+      // Extract index from part: "p.1" → selectorPart="p", index=1
+      const indexMatch = part.match(/\.(\d+)$/)
+      let selectorPart = indexMatch ? part.slice(0, -indexMatch[0].length) : part
+      const index = indexMatch ? parseInt(indexMatch[1], 10) : null
 
-        current = current.find(`.${clsName}`)
-        if (idx !== null && current.length > idx) {
-          current = current.eq(idx)
+      // Skip first part if it's the same as the element's class (e.g., class.item inside .item element)
+      // This handles rules like "class.item@tag.img@src" when parsing from .item element
+      if (i === 0 && selectorPart.startsWith('class.')) {
+        const cls = selectorPart.slice(6)
+        // Check if current element has this class
+        if (current.hasClass && current.hasClass(cls)) {
+          // Skip this selector, stay at current element
+          continue
         }
-      }
-      // Handle tag.xxx → xxx
-      else if (part.startsWith('tag.')) {
-        const tag = part.slice(4)
-        const indexMatch = tag.match(/\.\d+$/)
-        const tagName = indexMatch ? tag.slice(0, -indexMatch[0].length) : tag
-        const idx = indexMatch ? parseInt(tag.slice(-indexMatch[0].length + 1), 10) : null
-
-        current = current.find(tagName)
-        if (idx !== null && current.length > idx) {
-          current = current.eq(idx)
-        }
-      }
-      // Handle id.xxx → #xxx
-      else if (part.startsWith('id.')) {
-        const id = part.slice(3).split('.')[0]
+        current = current.find(`.${cls}`)
+      } else if (selectorPart.startsWith('class.')) {
+        const cls = selectorPart.slice(6)
+        current = current.find(`.${cls}`)
+      } else if (selectorPart.startsWith('tag.')) {
+        const tag = selectorPart.slice(4)
+        current = current.find(tag)
+      } else if (selectorPart.startsWith('id.')) {
+        const id = selectorPart.slice(3)
         current = current.find(`#${id}`)
+      } else if (selectorPart.startsWith('.')) {
+        current = current.find(selectorPart)
+      } else if (/^[a-zA-Z]+$/.test(selectorPart)) {
+        current = current.find(selectorPart)
       }
-      // Handle plain CSS selectors like ".item", "a.1", "img"
-      else if (part.startsWith('.')) {
-        // .item → class item, a.1 → <a> with index 1
-        const sel = part.slice(1)
-        const indexMatch = sel.match(/\.\d+$/)
-        const selName = indexMatch ? sel.slice(0, -indexMatch[0].length) : sel
-        const idx = indexMatch ? parseInt(sel.slice(-indexMatch[0].length + 1), 10) : null
 
-        // If selName is a number like "1", it's an index on current
-        if (/^\d+$/.test(selName)) {
-          const index = parseInt(selName, 10)
-          if (current.length > index) {
-            current = current.eq(index)
-          }
-        } else {
-          current = current.find(`.${selName}`)
-          if (idx !== null && current.length > idx) {
-            current = current.eq(idx)
-          }
-        }
-      }
-      // Handle tag names like "a", "img", "h3", "p"
-      else if (/^[a-zA-Z]+$/.test(part)) {
-        const indexMatch = part.match(/\d+$/)
-        const tagName = indexMatch ? part.slice(0, -indexMatch[0].length) : part
-        const idx = indexMatch ? parseInt(part.slice(-indexMatch[0].length), 10) : null
-
-        current = current.find(tagName)
-        if (idx !== null && current.length > idx) {
-          current = current.eq(idx)
-        }
-      }
-      // Handle indexed selectors like "a.1"
-      else {
-        const match = part.match(/^([a-zA-Z]+)\.(\d+)$/)
-        if (match) {
-          const [, tagName, idxStr] = match
-          const idx = parseInt(idxStr, 10)
-          current = current.find(tagName)
-          if (current.length > idx) {
-            current = current.eq(idx)
-          }
-        }
+      // Apply index: select nth element from found list
+      if (index !== null && current.length > index) {
+        current = current.eq(index)
       }
     }
 
