@@ -21,6 +21,7 @@ interface CustomSourceConfig {
   config: object
 }
 
+// Support both GET (small requests) and POST (large book source lists)
 export async function GET(request: NextRequest): Promise<NextResponse<SearchApiResponse>> {
   // Apply rate limiting
   const rateLimitResponse = await applyRateLimit(request)
@@ -40,6 +41,47 @@ export async function GET(request: NextRequest): Promise<NextResponse<SearchApiR
       error: 'Search query is required',
     }, { status: 400 })
   }
+
+  return executeSearch(query, page, customSourcesJson)
+}
+
+export async function POST(request: NextRequest): Promise<NextResponse<SearchApiResponse>> {
+  // Apply rate limiting
+  const rateLimitResponse = await applyRateLimit(request)
+  if (rateLimitResponse) {
+    return rateLimitResponse as NextResponse<SearchApiResponse>
+  }
+
+  try {
+    const body = await request.json()
+    const query = body.query
+    const page = parseInt(body.page || '1', 10)
+    const customSources = body.customSources
+
+    if (!query || query.trim().length === 0) {
+      return NextResponse.json({
+        success: false,
+        data: { novels: [], total: 0, page: 1, sources: [] },
+        error: 'Search query is required',
+      }, { status: 400 })
+    }
+
+    const customSourcesJson = customSources ? JSON.stringify(customSources) : null
+    return executeSearch(query, page, customSourcesJson)
+  } catch {
+    return NextResponse.json({
+      success: false,
+      data: { novels: [], total: 0, page: 1, sources: [] },
+      error: 'Invalid request body',
+    }, { status: 400 })
+  }
+}
+
+async function executeSearch(
+  query: string,
+  page: number,
+  customSourcesJson: string | null
+): Promise<NextResponse<SearchApiResponse>> {
 
   const normalizedQuery = query.trim().toLowerCase()
 

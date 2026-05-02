@@ -74,17 +74,25 @@ function SearchResultsContent() {
       return
     }
 
-    try {
-      const searchUrl = new URL('/api/search', window.location.origin)
-      searchUrl.searchParams.set('query', q)
-      searchUrl.searchParams.set('page', String(p))
-      searchUrl.searchParams.set('customSources', JSON.stringify(customSources.map(s => ({
-        sourceId: s.sourceId,
-        sourceName: s.sourceName,
-        config: s.config
-      }))))
+    // Limit to first 5 sources to avoid timeout
+    const sourcesToSearch = customSources.slice(0, 5)
 
-      const response = await fetch(searchUrl.toString())
+    try {
+      // Use POST to avoid URL length limits
+      const response = await fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: q,
+          page: p,
+          customSources: sourcesToSearch.map(s => ({
+            sourceId: s.sourceId,
+            sourceName: s.sourceName,
+            config: s.config
+          }))
+        })
+      })
+
       const data = await response.json()
 
       if (data.success) {
