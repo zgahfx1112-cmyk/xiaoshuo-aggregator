@@ -213,6 +213,120 @@ export class SourceParser {
     return result
   }
 
+  // Parse rule from a cheerio element (not re-loading HTML)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private parseRuleValueFromElement($: any, element: any, rule: string): string {
+    if (!rule) return ''
+
+    // Remove JS suffix like @js:java.t2s(result)
+    let cleanRule = rule.split('@js:')[0].split('<js>')[0]
+
+    // Remove ##replace patterns
+    cleanRule = cleanRule.split('##')[0]
+
+    // Handle rules starting from the element itself
+    const parts = cleanRule.split('@')
+    const lastPart = parts[parts.length - 1]
+
+    // Check if last part is an attribute
+    const isAttr = lastPart === 'text' || lastPart === 'textNodes' || lastPart === 'html' ||
+                   lastPart === 'href' || lastPart === 'src' || lastPart === 'content' ||
+                   lastPart === 'alt' || lastPart === 'name' || lastPart === 'value'
+
+    const selectorParts = isAttr ? parts.slice(0, -1) : parts
+    const attr = isAttr ? lastPart : 'text'
+
+    let current = element
+
+    for (let i = 0; i < selectorParts.length; i++) {
+      const part = selectorParts[i]
+      if (!part) continue
+
+      // Handle class.xxx → .xxx (but skip if it's the item class itself)
+      if (part.startsWith('class.')) {
+        const cls = part.slice(6)
+        const indexMatch = cls.match(/\.\d+$/)
+        const clsName = indexMatch ? cls.slice(0, -indexMatch[0].length) : cls
+        const idx = indexMatch ? parseInt(cls.slice(-indexMatch[0].length + 1), 10) : null
+
+        current = current.find(`.${clsName}`)
+        if (idx !== null && current.length > idx) {
+          current = current.eq(idx)
+        }
+      }
+      // Handle tag.xxx → xxx
+      else if (part.startsWith('tag.')) {
+        const tag = part.slice(4)
+        const indexMatch = tag.match(/\.\d+$/)
+        const tagName = indexMatch ? tag.slice(0, -indexMatch[0].length) : tag
+        const idx = indexMatch ? parseInt(tag.slice(-indexMatch[0].length + 1), 10) : null
+
+        current = current.find(tagName)
+        if (idx !== null && current.length > idx) {
+          current = current.eq(idx)
+        }
+      }
+      // Handle id.xxx → #xxx
+      else if (part.startsWith('id.')) {
+        const id = part.slice(3).split('.')[0]
+        current = current.find(`#${id}`)
+      }
+      // Handle plain CSS selectors like ".item", "a.1", "img"
+      else if (part.startsWith('.')) {
+        // .item → class item, a.1 → <a> with index 1
+        const sel = part.slice(1)
+        const indexMatch = sel.match(/\.\d+$/)
+        const selName = indexMatch ? sel.slice(0, -indexMatch[0].length) : sel
+        const idx = indexMatch ? parseInt(sel.slice(-indexMatch[0].length + 1), 10) : null
+
+        // If selName is a number like "1", it's an index on current
+        if (/^\d+$/.test(selName)) {
+          const index = parseInt(selName, 10)
+          if (current.length > index) {
+            current = current.eq(index)
+          }
+        } else {
+          current = current.find(`.${selName}`)
+          if (idx !== null && current.length > idx) {
+            current = current.eq(idx)
+          }
+        }
+      }
+      // Handle tag names like "a", "img", "h3", "p"
+      else if (/^[a-zA-Z]+$/.test(part)) {
+        const indexMatch = part.match(/\d+$/)
+        const tagName = indexMatch ? part.slice(0, -indexMatch[0].length) : part
+        const idx = indexMatch ? parseInt(part.slice(-indexMatch[0].length), 10) : null
+
+        current = current.find(tagName)
+        if (idx !== null && current.length > idx) {
+          current = current.eq(idx)
+        }
+      }
+      // Handle indexed selectors like "a.1"
+      else {
+        const match = part.match(/^([a-zA-Z]+)\.(\d+)$/)
+        if (match) {
+          const [, tagName, idxStr] = match
+          const idx = parseInt(idxStr, 10)
+          current = current.find(tagName)
+          if (current.length > idx) {
+            current = current.eq(idx)
+          }
+        }
+      }
+    }
+
+    // Get attribute/text
+    if (attr === 'text' || attr === 'textNodes') {
+      return current.text().trim()
+    }
+    if (attr === 'html') {
+      return current.html() || ''
+    }
+    return current.attr(attr) || ''
+  }
+
   // Select elements by 阅读APP rule format
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private selectElements($: any, rule: string): any {
@@ -244,55 +358,58 @@ export class SourceParser {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private parseReadRule($: any, rule: string): string {
     const parts = rule.split('@')
-    const selectorParts = parts[0].split('.')
-    const attr = parts[1] || 'text'
+    const lastPart = parts[parts.length - 1]
+
+    // Check if last part is an attribute (not a selector)
+    const isAttr = lastPart === 'text' || lastPart === 'textNodes' || lastPart === 'html' ||
+                   lastPart === 'href' || lastPart === 'src' || lastPart === 'content' ||
+                   lastPart === 'alt' || lastPart === 'name' || lastPart === 'value'
+
+    const selectorParts = isAttr ? parts.slice(0, -1) : parts
+    const attr = isAttr ? lastPart : 'text'
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let current: any = $.root()
-    let idx = 0
 
-    for (const part of selectorParts) {
+    for (let i = 0; i < selectorParts.length; i++) {
+      const part = selectorParts[i]
       if (!part) continue
 
-      // Index: 0, 1, 2
-      if (/^\d+$/.test(part)) {
-        const index = parseInt(part, 10)
-        current = current.children().eq(index)
-        continue
+      // Split part into type prefix and index
+      // e.g., "tag.p.1" → typePrefix="tag.p", index=1
+      // e.g., "class.itemtxt" → typePrefix="class.itemtxt", index=null
+      const indexMatch = part.match(/\.\d+$/)
+      const matchIndex = indexMatch?.index ?? 0
+      const index = indexMatch ? parseInt(part.slice(matchIndex + 1), 10) : null
+      const typePart = indexMatch ? part.slice(0, matchIndex) : part
+
+      // Handle type prefix and find elements
+      if (typePart.startsWith('id.')) {
+        const id = typePart.slice(3)
+        current = $(`#${id}`)
+      } else if (typePart.startsWith('class.')) {
+        const cls = typePart.slice(6)
+        current = current.find(`.${cls}`)
+      } else if (typePart.startsWith('tag.')) {
+        const tag = typePart.slice(4)
+        current = current.find(tag)
+      } else if (typePart) {
+        // Plain selector
+        current = current.find(typePart)
       }
 
-      // Type prefix
-      if (part === 'id') {
-        const next = selectorParts[idx + 1]
-        if (next) {
-          current = $(`#${next}`)
-          idx += 2
-          continue
-        }
-      } else if (part === 'class') {
-        const next = selectorParts[idx + 1]
-        if (next) {
-          current = current.find(`.${next}`)
-          idx += 2
-          continue
-        }
-      } else if (part === 'tag') {
-        const next = selectorParts[idx + 1]
-        if (next) {
-          current = current.find(next)
-          idx += 2
-          continue
-        }
+      // Apply index if present - select from the found elements list
+      if (index !== null && current.length > index) {
+        current = current.eq(index)
       }
-
-      // Plain selector
-      current = current.find(part)
-      idx++
     }
 
     // Get attribute/text
     if (attr === 'text' || attr === 'textNodes') {
-      return current.text()
+      return current.text().trim()
+    }
+    if (attr === 'html') {
+      return current.html() || ''
     }
     return current.attr(attr) || ''
   }
@@ -393,17 +510,32 @@ export class SourceParser {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let listElements: any
 
-      if (listRule.startsWith('id.')) {
-        const id = listRule.slice(3).split('.')[0].split('@')[0]
-        const container = $(`#${id}`)
-        // id.xxx.0@tag.li → find tag.li inside
-        const subRule = listRule.split('@').slice(1).join('@') || 'tag.li'
-        listElements = this.selectElements(container, subRule)
+      // Direct selector: class.item → .item (no @ separator)
+      if (listRule.startsWith('class.') && !listRule.includes('@')) {
+        const cls = listRule.slice(6)
+        listElements = $(`.${cls}`)
+      } else if (listRule.startsWith('id.') && !listRule.includes('@')) {
+        const id = listRule.slice(3)
+        listElements = $(`#${id}`)
       } else if (listRule.startsWith('class.')) {
-        const cls = listRule.slice(6).split('.')[0].split('@')[0]
-        const container = $(`.${cls}`)
-        const subRule = listRule.split('@').slice(1).join('@') || 'tag.li'
-        listElements = this.selectElements(container, subRule)
+        // Chained: class.container@class.item → find .item inside .container
+        const parts = listRule.split('@')
+        const containerCls = parts[0].slice(6)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let container: any = $(`.${containerCls}`)
+        for (let i = 1; i < parts.length; i++) {
+          container = this.selectElements(container, parts[i])
+        }
+        listElements = container
+      } else if (listRule.startsWith('id.')) {
+        const parts = listRule.split('@')
+        const containerId = parts[0].slice(3)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let container: any = $(`#${containerId}`)
+        for (let i = 1; i < parts.length; i++) {
+          container = this.selectElements(container, parts[i])
+        }
+        listElements = container
       } else {
         listElements = this.selectElements($, listRule)
       }
@@ -411,13 +543,14 @@ export class SourceParser {
       const results: SearchResult[] = []
 
       listElements.each((_: number, el: any) => {
-        const itemHtml = $(el).html() || ''
-        const item$ = cheerio.load(itemHtml)
+        const itemEl = $(el)
 
-        const title = this.parseRuleValue(itemHtml, nameRule) as string
-        const author = this.parseRuleValue(itemHtml, authorRule) as string
-        const cover = this.parseRuleValue(itemHtml, coverRule) as string
-        const bookUrl = this.parseRuleValue(itemHtml, bookUrlRule) as string
+        // Parse each field using the item element directly (not re-loading HTML)
+        // This allows rules like "class.item@tag.img@src" to work properly
+        const title = this.parseRuleValueFromElement($, itemEl, nameRule) as string
+        const author = this.parseRuleValueFromElement($, itemEl, authorRule) as string
+        const cover = this.parseRuleValueFromElement($, itemEl, coverRule) as string
+        const bookUrl = this.parseRuleValueFromElement($, itemEl, bookUrlRule) as string
 
         if (title && bookUrl) {
           results.push({
