@@ -1,4 +1,4 @@
-import { getRedisClient } from './redis'
+import { getRedisClient, isRedisAvailable } from './redis'
 
 // Rate limit configuration
 const RATE_LIMIT_WINDOW = 60 // 60 seconds sliding window
@@ -35,6 +35,15 @@ export function extractIp(request: Request): string {
  * Uses sliding window algorithm with Redis
  */
 export async function rateLimit(ip: string): Promise<RateLimitResult> {
+  // If Redis is not available, skip rate limiting (fail open)
+  if (!isRedisAvailable()) {
+    return {
+      allowed: true,
+      remaining: RATE_LIMIT_MAX,
+      resetAt: Date.now() + RATE_LIMIT_WINDOW * 1000,
+    }
+  }
+
   const redis = getRedisClient()
   const key = `rate_limit:${ip}`
   const now = Date.now()

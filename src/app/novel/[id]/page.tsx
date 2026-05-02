@@ -10,24 +10,30 @@ async function getNovelDetail(id: string) {
     ? `https://${process.env.VERCEL_URL}`
     : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'
 
-  const response = await fetch(`${baseUrl}/api/novel/${id}`, {
-    next: { revalidate: 3600 }, // Revalidate every hour
-  })
+  try {
+    const response = await fetch(`${baseUrl}/api/novel/${id}`, {
+      next: { revalidate: 3600 }, // Revalidate every hour
+    })
 
-  if (!response.ok) {
-    if (response.status === 404) {
+    if (!response.ok) {
+      if (response.status === 404) {
+        return null
+      }
+      console.error('Error fetching novel detail:', response.status)
       return null
     }
-    throw new Error('Failed to fetch novel')
-  }
 
-  const result = await response.json()
+    const result = await response.json()
 
-  if (!result.success || !result.data) {
+    if (!result.success || !result.data) {
+      return null
+    }
+
+    return result.data
+  } catch (error) {
+    console.error('Error fetching novel detail:', error)
     return null
   }
-
-  return result.data
 }
 
 export default async function NovelDetailPage({ params }: RouteParams) {

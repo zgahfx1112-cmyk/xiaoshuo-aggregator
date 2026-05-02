@@ -2,13 +2,29 @@ import { Redis } from '@upstash/redis'
 
 // Redis client singleton
 let redisClient: Redis | null = null
+let redisAvailable = false
+
+export function isRedisAvailable(): boolean {
+  return redisAvailable && redisClient !== null
+}
 
 export function getRedisClient(): Redis {
   if (!redisClient) {
-    redisClient = new Redis({
-      url: process.env.REDIS_URL || 'http://localhost:6379',
-      token: process.env.REDIS_TOKEN || '',
-    })
+    const url = process.env.REDIS_URL
+    const token = process.env.REDIS_TOKEN
+
+    // Only create Redis client if both URL and token are configured
+    if (url && token) {
+      redisClient = new Redis({ url, token })
+      redisAvailable = true
+    } else {
+      // Use a mock client that will fail gracefully
+      redisClient = new Redis({
+        url: 'http://localhost:6379',
+        token: '',
+      })
+      redisAvailable = false
+    }
   }
   return redisClient
 }
@@ -34,10 +50,18 @@ async function recordCacheStat(key: string, hit: boolean): Promise<void> {
 
 // Cache operations
 export async function cacheGet<T>(key: string): Promise<T | null> {
-  const client = getRedisClient()
-  const value = await client.get<T>(key)
-  await recordCacheStat(key, value !== null)
-  return value
+  // Skip cache if Redis unavailable
+  if (!isRedisAvailable()) {
+    return null
+  }
+  try {
+    const client = getRedisClient()
+    const value = await client.get<T>(key)
+    await recordCacheStat(key, value !== null)
+    return value
+  } catch {
+    return null
+  }
 }
 
 export async function cacheSet(
@@ -45,14 +69,30 @@ export async function cacheSet(
   value: unknown,
   ttl: number // seconds
 ): Promise<string> {
-  const client = getRedisClient()
-  const result = await client.set(key, value, { ex: ttl })
-  return result as string
+  // Skip cache if Redis unavailable
+  if (!isRedisAvailable()) {
+    return 'OK'
+  }
+  try {
+    const client = getRedisClient()
+    const result = await client.set(key, value, { ex: ttl })
+    return result as string
+  } catch {
+    return 'OK'
+  }
 }
 
 export async function cacheDel(key: string): Promise<number> {
-  const client = getRedisClient()
-  return await client.del(key)
+  // Skip cache if Redis unavailable
+  if (!isRedisAvailable()) {
+    return 0
+  }
+  try {
+    const client = getRedisClient()
+    return await client.del(key)
+  } catch {
+    return 0
+  }
 }
 
 // Cache key generators
