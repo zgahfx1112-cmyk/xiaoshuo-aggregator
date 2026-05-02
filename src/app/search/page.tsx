@@ -23,7 +23,7 @@ import {
 } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
 import Link from 'next/link'
-import { useBookshelf } from '@/hooks/useBookshelf'
+import { useBookshelf, UserSourceConfig } from '@/hooks/useBookshelf'
 
 interface SearchResult {
   title: string
@@ -54,6 +54,7 @@ function SearchResultsContent() {
   const [searchQuery, setSearchQuery] = useState(query)
   const [sourceStats, setSourceStats] = useState<SourceStat[]>([])
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
+  const [searchProgress, setSearchProgress] = useState<{ current: number; total: number } | null>(null)
 
   useEffect(() => {
     if (query.trim()) {
@@ -65,6 +66,9 @@ function SearchResultsContent() {
     setLoading(true)
     setError(null)
     setSelectedSourceId(null)
+    setResults([])
+    setTotal(0)
+    setSourceStats([])
 
     const customSources = getEnabledCustomSources()
 
@@ -74,38 +78,62 @@ function SearchResultsContent() {
       return
     }
 
-    // Limit to first 5 sources to avoid timeout
-    const sourcesToSearch = customSources.slice(0, 5)
+    // Batch search: 5 sources per batch
+    const batchSize = 5
+    const batches: UserSourceConfig[][] = []
+    for (let i = 0; i < customSources.length; i += batchSize) {
+      batches.push(customSources.slice(i, i + batchSize))
+    }
 
-    try {
-      // Use POST to avoid URL length limits
-      const response = await fetch('/api/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: q,
-          page: p,
-          customSources: sourcesToSearch.map(s => ({
-            sourceId: s.sourceId,
-            sourceName: s.sourceName,
-            config: s.config
-          }))
+    const allResults: SearchResult[] = []
+    const allSourceStats: SourceStat[] = []
+
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      setSearchProgress({ current: batchIndex + 1, total: batches.length })
+
+      const batch = batches[batchIndex]
+
+      try {
+        const response = await fetch('/api/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: q,
+            page: 1,
+            customSources: batch.map(s => ({
+              sourceId: s.sourceId,
+              sourceName: s.sourceName,
+              config: s.config
+            }))
+          })
         })
-      })
 
-      const data = await response.json()
+        const data = await response.json()
 
-      if (data.success) {
-        setResults(data.data.novels)
-        setTotal(data.data.total)
-        setSourceStats(data.data.sources || [])
-      } else {
-        setError(data.error || '搜索失败')
+        if (data.success) {
+          allResults.push(...data.data.novels)
+          allSourceStats.push(...data.data.sources)
+
+          // Update results incrementally
+          setResults([...allResults])
+          setTotal(allResults.length)
+          setSourceStats([...allSourceStats])
+        }
+      } catch {
+        // Batch failed, continue to next
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '搜索失败')
-    } finally {
-      setLoading(false)
+
+      // Small delay between batches to avoid overwhelming server
+      if (batchIndex < batches.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+    }
+
+    setSearchProgress(null)
+    setLoading(false)
+
+    if (allResults.length === 0) {
+      setError('所有书源均无结果')
     }
   }
 
@@ -172,8 +200,13 @@ function SearchResultsContent() {
 
         {/* 加载状态 */}
         {loading && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', py: 4 }}>
             <CircularProgress />
+            {searchProgress && (
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                搜索中... 第 {searchProgress.current}/{searchProgress.total} 批书源
+              </Typography>
+            )}
           </Box>
         )}
 
