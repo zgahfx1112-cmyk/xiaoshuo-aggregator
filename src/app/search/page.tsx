@@ -20,6 +20,7 @@ import {
   Chip,
   Tabs,
   Tab,
+  LinearProgress,
 } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
 import Link from 'next/link'
@@ -38,6 +39,8 @@ interface SourceStat {
   id: string
   name: string
   resultCount: number
+  status: 'pending' | 'searching' | 'done' | 'error'
+  error?: string
 }
 
 function SearchResultsContent() {
@@ -48,30 +51,29 @@ function SearchResultsContent() {
   const { getEnabledCustomSources } = useBookshelf()
 
   const [results, setResults] = useState<SearchResult[]>([])
-  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState(query)
   const [sourceStats, setSourceStats] = useState<SourceStat[]>([])
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
-  const [searchProgress, setSearchProgress] = useState<{ current: number; total: number } | null>(null)
+  const [searchProgress, setSearchProgress] = useState({ completed: 0, total: 0 })
+  const [foundCount, setFoundCount] = useState(0)
 
   const abortControllerRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     if (query.trim()) {
-      performSearch(query, page)
+      performSearch(query)
     }
-    // Cleanup: cancel pending requests on unmount
     return () => {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort()
       }
     }
-  }, [query, page])
+  }, [query])
 
-  const performSearch = async (q: string, p: number) => {
-    // Cancel previous search if still running
+  const performSearch = async (q: string) => {
+    // Cancel previous search
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
     }
@@ -82,8 +84,7 @@ function SearchResultsContent() {
     setError(null)
     setSelectedSourceId(null)
     setResults([])
-    setTotal(0)
-    setSourceStats([])
+    setFoundCount(0)
 
     const customSources = getEnabledCustomSources()
 
@@ -93,23 +94,26 @@ function SearchResultsContent() {
       return
     }
 
-    // Batch search: 5 sources per batch
-    const batchSize = 5
-    const batches: UserSourceConfig[][] = []
-    for (let i = 0; i < customSources.length; i += batchSize) {
-      batches.push(customSources.slice(i, i + batchSize))
-    }
+    // Initialize all sources as pending
+    const initialStats: SourceStat[] = customSources.map(s => ({
+      id: s.sourceId,
+      name: s.sourceName,
+      resultCount: 0,
+      status: 'pending'
+    }))
+    setSourceStats(initialStats)
+    setSearchProgress({ completed: 0, total: customSources.length })
 
-    const allResults: SearchResult[] = []
-    const allSourceStats: SourceStat[] = []
+    // Search each source individually with parallel requests
+    const timeout = 8000 // 8s timeout per source
 
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-      // Check if request was aborted
-      if (signal.aborted) break
+    const searchPromises = customSources.map(async (source, index) => {
+      if (signal.aborted) return null
 
-      setSearchProgress({ current: batchIndex + 1, total: batches.length })
-
-      const batch = batches[batchIndex]
+      // Update status to searching
+      setSourceStats(prev => prev.map(s =>
+        s.id === source.sourceId ? { ...s, status: 'searching' } : s
+      ))
 
       try {
         const response = await fetch('/api/search', {
@@ -117,45 +121,70 @@ function SearchResultsContent() {
           headers: { 'Content-Type': 'application/json; charset=utf-8' },
           body: JSON.stringify({
             query: q,
-            page: 1,
-            customSources: batch.map(s => ({
-              sourceId: s.sourceId,
-              sourceName: s.sourceName,
-              config: s.config
-            }))
+            source: {
+              sourceId: source.sourceId,
+              sourceName: source.sourceName,
+              config: source.config
+            },
+            timeout
           }),
           signal
         })
 
-        if (signal.aborted) break
+        if (signal.aborted) return null
 
         const data = await response.json()
 
-        if (data.success) {
-          allResults.push(...data.data.novels)
-          allSourceStats.push(...data.data.sources)
+        if (data.success && data.data.novels.length > 0) {
+          // Update results immediately
+          setResults(prev => [...prev, ...data.data.novels])
+          setFoundCount(prev => prev + data.data.novels.length)
 
-          // Update results incrementally
-          setResults([...allResults])
-          setTotal(allResults.length)
-          setSourceStats([...allSourceStats])
+          // Update source stat
+          setSourceStats(prev => prev.map(s =>
+            s.id === source.sourceId
+              ? { ...s, resultCount: data.data.novels.length, status: 'done' }
+              : s
+          ))
+
+          setSearchProgress(prev => ({ ...prev, completed: prev.completed + 1 }))
+
+          return { sourceId: source.sourceId, results: data.data.novels }
+        } else {
+          // No results
+          setSourceStats(prev => prev.map(s =>
+            s.id === source.sourceId
+              ? { ...s, resultCount: 0, status: 'done', error: data.error || '无结果' }
+              : s
+          ))
+          setSearchProgress(prev => ({ ...prev, completed: prev.completed + 1 }))
+          return null
         }
       } catch (err) {
-        // Ignore abort errors
-        if (err instanceof Error && err.name === 'AbortError') break
-        // Batch failed, continue to next
-      }
+        if (signal.aborted) return null
 
-      // Small delay between batches to avoid overwhelming server
-      if (batchIndex < batches.length - 1 && !signal.aborted) {
-        await new Promise(resolve => setTimeout(resolve, 500))
-      }
-    }
+        const errorMsg = err instanceof Error && err.name === 'AbortError'
+          ? '已取消'
+          : err instanceof Error ? err.message : '请求失败'
 
-    setSearchProgress(null)
+        setSourceStats(prev => prev.map(s =>
+          s.id === source.sourceId
+            ? { ...s, resultCount: 0, status: 'error', error: errorMsg }
+            : s
+        ))
+        setSearchProgress(prev => ({ ...prev, completed: prev.completed + 1 }))
+        return null
+      }
+    })
+
+    // Wait for all searches to complete
+    await Promise.all(searchPromises)
+
     setLoading(false)
 
-    if (!signal.aborted && allResults.length === 0) {
+    // Check if any results found
+    const finalResults = results.length
+    if (finalResults === 0 && !signal.aborted) {
       setError('所有书源均无结果')
     }
   }
@@ -165,11 +194,14 @@ function SearchResultsContent() {
     ? results.filter(r => r.sourceId === selectedSourceId)
     : results
 
-  // Client-side pagination (slice for current page)
+  // Client-side pagination
   const pageSize = 20
   const startIndex = (page - 1) * pageSize
   const displayResults = filteredResults.slice(startIndex, startIndex + pageSize)
   const displayTotal = filteredResults.length
+
+  // Count available sources (with results)
+  const availableSources = sourceStats.filter(s => s.resultCount > 0).length
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
@@ -210,6 +242,27 @@ function SearchResultsContent() {
           </Box>
         </Box>
 
+        {/* 搜索进度 */}
+        {loading && (
+          <Box sx={{ mb: 2 }}>
+            <LinearProgress
+              variant="determinate"
+              value={(searchProgress.completed / searchProgress.total) * 100}
+              sx={{ mb: 1 }}
+            />
+            <Typography variant="body2" color="text.secondary">
+              搜索中... {searchProgress.completed}/{searchProgress.total} 个书源，已找到 {foundCount} 条结果
+            </Typography>
+          </Box>
+        )}
+
+        {/* 可用书源统计 */}
+        {!loading && availableSources > 0 && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            找到 {availableSources} 个可用书源，共 {results.length} 条结果
+          </Alert>
+        )}
+
         {/* 错误提示 */}
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
@@ -218,49 +271,43 @@ function SearchResultsContent() {
         )}
 
         {/* 无书源提示 */}
-        {!loading && !error && query && total === 0 && (
+        {!loading && !error && query && results.length === 0 && sourceStats.length === 0 && (
           <Alert severity="info" sx={{ mb: 2 }}>
             请先在书源管理页导入并启用书源
           </Alert>
         )}
 
-        {/* 加载状态 */}
-        {loading && (
-          <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', py: 4 }}>
-            <CircularProgress />
-            {searchProgress && (
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                搜索中... 第 {searchProgress.current}/{searchProgress.total} 批书源
-              </Typography>
-            )}
-          </Box>
+        {/* 书源状态列表 */}
+        {sourceStats.length > 0 && (
+          <Paper sx={{ p: 2, mb: 2 }}>
+            <Typography variant="subtitle2" gutterBottom>
+              书源状态 ({availableSources}/{sourceStats.length} 可用)
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {sourceStats.map(stat => (
+                <Chip
+                  key={stat.id}
+                  label={`${stat.name} (${stat.resultCount})`}
+                  size="small"
+                  color={
+                    stat.status === 'searching' ? 'primary' :
+                    stat.status === 'done' && stat.resultCount > 0 ? 'success' :
+                    stat.status === 'error' ? 'error' : 'default'
+                  }
+                  variant={stat.status === 'searching' ? 'outlined' : 'filled'}
+                  onClick={() => setSelectedSourceId(
+                    selectedSourceId === stat.id ? null : stat.id
+                  )}
+                  sx={{ cursor: 'pointer' }}
+                />
+              ))}
+            </Box>
+          </Paper>
         )}
 
         {/* 搜索结果 */}
         {!loading && !error && results.length > 0 && (
           <>
-            {/* 书源统计tabs */}
-            {sourceStats.length > 1 && (
-              <Box sx={{ mb: 2 }}>
-                <Tabs
-                  value={selectedSourceId || 'all'}
-                  onChange={(_, newValue) => setSelectedSourceId(newValue === 'all' ? null : newValue)}
-                  variant="scrollable"
-                  scrollButtons="auto"
-                >
-                  <Tab value="all" label={`全部 (${total})`} />
-                  {sourceStats.map(stat => (
-                    <Tab
-                      key={stat.id}
-                      value={stat.id}
-                      label={`${stat.name} (${stat.resultCount})`}
-                      disabled={stat.resultCount === 0}
-                    />
-                  ))}
-                </Tabs>
-              </Box>
-            )}
-
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               找到 {displayTotal} 条结果 {selectedSourceId ? `(来自 ${sourceStats.find(s => s.id === selectedSourceId)?.name})` : ''} for "{query}"
             </Typography>
