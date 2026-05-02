@@ -2,6 +2,19 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
 
+export interface SourceInfo {
+  sourceId: string
+  sourceName: string
+  bookUrl: string
+  sourceConfig: object
+}
+
+export interface ChapterUrlCache {
+  chapterNum: number
+  title: string
+  url: string
+}
+
 export interface BookshelfItem {
   id: string
   title: string
@@ -11,6 +24,12 @@ export interface BookshelfItem {
   lastReadAt: string
   lastReadChapter: number
   totalChapters: number
+  // 书源信息
+  primarySource: SourceInfo
+  // 备用书源
+  backupSources?: SourceInfo[]
+  // 章节 URL 缓存
+  chapterUrls?: ChapterUrlCache[]
 }
 
 // 用户书源配置（本地存储）

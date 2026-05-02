@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   Container,
@@ -10,15 +11,18 @@ import {
   Button,
   Chip,
   Divider,
-  Rating as MuiRating,
   IconButton,
   Snackbar,
   Alert,
+  CircularProgress,
+  LinearProgress,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemText,
 } from '@mui/material'
-import ChapterList from '@/components/ChapterList'
-import Comment from '@/components/Comment'
+import { useBookshelf, BookshelfItem, SourceInfo } from '@/hooks/useBookshelf'
 
-// Inline SVG icons to avoid additional dependency
 const ArrowBackIcon = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
     <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
@@ -43,58 +47,27 @@ const BookmarkAddedIcon = () => (
   </svg>
 )
 
-interface NovelDetail {
-  id: string
+interface NovelData {
   title: string
   author: string
-  cover: string
   description: string
-  tags: string[]
-  category: string
-  status: string
-  wordCount: number
-  rating: number
-  sources: { sourceName: string; sourceUrl: string; available: boolean }[]
-}
-
-interface NovelDetailPageProps {
-  novel: NovelDetail
-  chapters: { chapterNum: number; title: string }[]
-  totalChapters?: number
-}
-
-const BOOKSHELF_KEY = 'xiaoshuo_bookshelf'
-
-interface BookshelfItem {
-  id: string
-  title: string
-  author: string
   cover: string
-  addedAt: number
-  lastReadChapter?: number
+  chapters: Array<{ title: string; url: string }>
+  sourceName: string
 }
 
-function getBookshelf(): BookshelfItem[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const stored = localStorage.getItem(BOOKSHELF_KEY)
-    return stored ? JSON.parse(stored) : []
-  } catch {
-    return []
-  }
-}
+export default function NovelDetailClient() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const { addToBookshelf, removeFromBookshelf, isInBookshelf } = useBookshelf()
 
-function saveBookshelf(items: BookshelfItem[]) {
-  localStorage.setItem(BOOKSHELF_KEY, JSON.stringify(items))
-}
+  const sourceName = searchParams.get('source') || ''
+  const bookUrl = searchParams.get('bookUrl') || ''
+  const sourceConfigJson = searchParams.get('sourceConfig') || ''
 
-export default function NovelDetailClient({ novel, chapters, totalChapters }: NovelDetailPageProps) {
-  // Lazy initial state for bookshelf - only runs once on client mount
-  const [inBookshelf, setInBookshelf] = useState(() => {
-    if (typeof window === 'undefined') return false
-    const bookshelf = getBookshelf()
-    return bookshelf.some((item) => item.id === novel.id)
-  })
+  const [novel, setNovel] = useState<NovelData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [snackbar, setSnackbar] = useState<{
     open: boolean
     message: string
@@ -105,44 +78,116 @@ export default function NovelDetailClient({ novel, chapters, totalChapters }: No
     severity: 'success',
   })
 
-  const toggleBookshelf = useCallback(() => {
-    const bookshelf = getBookshelf()
-    const existingIndex = bookshelf.findIndex((item) => item.id === novel.id)
+  // Parse source config
+  const sourceConfig = sourceConfigJson ? JSON.parse(sourceConfigJson) : null
+  const novelId = novel ? encodeURIComponent(novel.title) : ''
 
-    if (existingIndex >= 0) {
-      // Remove from bookshelf
-      bookshelf.splice(existingIndex, 1)
-      saveBookshelf(bookshelf)
-      setInBookshelf(false)
-      setSnackbar({
-        open: true,
-        message: 'Removed from bookshelf',
-        severity: 'info',
-      })
+  // Check if in bookshelf
+  const inBookshelf = novel ? isInBookshelf(novelId) : false
+
+  // Fetch novel detail
+  useEffect(() => {
+    if (!bookUrl || !sourceConfig) {
+      setError('缺少书源参数')
+      setLoading(false)
+      return
+    }
+
+    const fetchNovel = async () => {
+      try {
+        const response = await fetch('/api/novel/detail', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({ bookUrl, sourceConfig }),
+        })
+
+        const data = await response.json()
+
+        if (data.success) {
+          setNovel(data.data)
+        } else {
+          setError(data.error || '获取小说详情失败')
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '请求失败')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchNovel()
+  }, [bookUrl, sourceConfig])
+
+  const handleToggleBookshelf = useCallback(() => {
+    if (!novel || !sourceConfig) return
+
+    const id = encodeURIComponent(novel.title)
+
+    if (inBookshelf) {
+      removeFromBookshelf(id)
+      setSnackbar({ open: true, message: '已从书架移除', severity: 'info' })
     } else {
-      // Add to bookshelf
-      bookshelf.push({
-        id: novel.id,
+      const primarySource: SourceInfo = {
+        sourceId: sourceConfig.bookSourceUrl || sourceName,
+        sourceName,
+        bookUrl,
+        sourceConfig,
+      }
+
+      const item: Omit<BookshelfItem, 'addedAt' | 'lastReadAt'> = {
+        id,
         title: novel.title,
         author: novel.author,
         cover: novel.cover,
-        addedAt: Date.now(),
-      })
-      saveBookshelf(bookshelf)
-      setInBookshelf(true)
-      setSnackbar({
-        open: true,
-        message: 'Added to bookshelf',
-        severity: 'success',
-      })
-    }
-  }, [novel])
+        lastReadChapter: 0,
+        totalChapters: novel.chapters.length,
+        primarySource,
+        chapterUrls: novel.chapters.map((ch, idx) => ({
+          chapterNum: idx + 1,
+          title: ch.title,
+          url: ch.url,
+        })),
+      }
 
-  const formatWordCount = (count: number) => {
-    if (count >= 10000) {
-      return `${(count / 10000).toFixed(1)}万字`
+      addToBookshelf(item)
+      setSnackbar({ open: true, message: '已加入书架', severity: 'success' })
     }
-    return `${count}字`
+  }, [novel, sourceConfig, sourceName, bookUrl, inBookshelf, addToBookshelf, removeFromBookshelf])
+
+  const handleChapterClick = (chapterUrl: string, chapterNum: number) => {
+    if (!novel) return
+    router.push(
+      `/read/${encodeURIComponent(novel.title)}/${chapterNum}?source=${encodeURIComponent(sourceName)}&chapterUrl=${encodeURIComponent(chapterUrl)}&sourceConfig=${encodeURIComponent(sourceConfigJson)}`
+    )
+  }
+
+  if (loading) {
+    return (
+      <Container maxWidth="md" sx={{ py: 3 }}>
+        <Box sx={{ mb: 2 }}>
+          <IconButton component={Link} href="/" aria-label="back to home" size="large">
+            <ArrowBackIcon />
+          </IconButton>
+        </Box>
+        <LinearProgress />
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+          正在从书源获取小说详情...
+        </Typography>
+      </Container>
+    )
+  }
+
+  if (error || !novel) {
+    return (
+      <Container maxWidth="md" sx={{ py: 3 }}>
+        <Box sx={{ mb: 2 }}>
+          <IconButton component={Link} href="/" aria-label="back to home" size="large">
+            <ArrowBackIcon />
+          </IconButton>
+        </Box>
+        <Alert severity="error">{error || '获取小说详情失败'}</Alert>
+      </Container>
+    )
   }
 
   return (
@@ -180,56 +225,33 @@ export default function NovelDetailClient({ novel, chapters, totalChapters }: No
 
             <Box sx={{ display: 'flex', flexDirection: 'row', gap: 1, alignItems: 'center', mb: 1 }}>
               <Typography variant="body1" color="text.secondary">
-                {novel.author}
+                {novel.author || '未知作者'}
               </Typography>
-              <Chip
-                label={novel.status}
-                size="small"
-                color={novel.status === '完结' ? 'success' : 'primary'}
-              />
-              <Chip label={novel.category} size="small" variant="outlined" />
+              <Chip label={sourceName} size="small" color="primary" variant="outlined" />
             </Box>
 
-            <Box sx={{ display: 'flex', flexDirection: 'row', gap: 2, alignItems: 'center', mb: 2 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                <MuiRating value={novel.rating / 2} precision={0.5} readOnly size="small" />
-                <Typography variant="body2" color="text.secondary">
-                  {novel.rating.toFixed(1)}
-                </Typography>
-              </Box>
-              <Typography variant="body2" color="text.secondary">
-                {formatWordCount(novel.wordCount)}
-              </Typography>
-            </Box>
-
-            {/* Tags */}
-            {novel.tags.length > 0 && (
-              <Box sx={{ display: 'flex', flexDirection: 'row', gap: 0.5, flexWrap: 'wrap', mb: 2 }}>
-                {novel.tags.map((tag, index) => (
-                  <Chip key={index} label={tag} size="small" sx={{ mb: 0.5 }} />
-                ))}
-              </Box>
-            )}
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              共 {novel.chapters.length} 章
+            </Typography>
 
             {/* Action buttons */}
             <Box sx={{ display: 'flex', flexDirection: 'row', gap: 1 }}>
-              {chapters.length > 0 && (
+              {novel.chapters.length > 0 && (
                 <Button
                   variant="contained"
                   startIcon={<MenuBookIcon />}
-                  component={Link}
-                  href={`/read/${novel.id}/1`}
+                  onClick={() => handleChapterClick(novel.chapters[0].url, 1)}
                 >
-                  Start Reading
+                  开始阅读
                 </Button>
               )}
               <Button
                 variant={inBookshelf ? 'contained' : 'outlined'}
                 color={inBookshelf ? 'success' : 'primary'}
                 startIcon={inBookshelf ? <BookmarkAddedIcon /> : <BookmarkAddIcon />}
-                onClick={toggleBookshelf}
+                onClick={handleToggleBookshelf}
               >
-                {inBookshelf ? 'In Bookshelf' : 'Add to Bookshelf'}
+                {inBookshelf ? '已在书架' : '加入书架'}
               </Button>
             </Box>
           </Box>
@@ -239,7 +261,7 @@ export default function NovelDetailClient({ novel, chapters, totalChapters }: No
 
         {/* Description */}
         <Typography variant="h6" gutterBottom>
-          Description
+          简介
         </Typography>
         <Typography
           variant="body2"
@@ -250,22 +272,29 @@ export default function NovelDetailClient({ novel, chapters, totalChapters }: No
             overflow: 'auto',
           }}
         >
-          {novel.description || 'No description available.'}
+          {novel.description || '暂无简介'}
         </Typography>
       </Paper>
 
       {/* Chapter list */}
       <Paper sx={{ p: 2 }}>
-        <ChapterList
-          novelId={novel.id}
-          initialChapters={chapters}
-          totalChapters={totalChapters ?? chapters.length}
-        />
-      </Paper>
-
-      {/* Comments section */}
-      <Paper sx={{ p: 2, mt: 3 }}>
-        <Comment />
+        <Typography variant="h6" gutterBottom>
+          章节列表 ({novel.chapters.length} 章)
+        </Typography>
+        <List>
+          {novel.chapters.slice(0, 50).map((chapter, index) => (
+            <ListItem key={chapter.url} disablePadding>
+              <ListItemButton onClick={() => handleChapterClick(chapter.url, index + 1)}>
+                <ListItemText primary={chapter.title} />
+              </ListItemButton>
+            </ListItem>
+          ))}
+        </List>
+        {novel.chapters.length > 50 && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            仅显示前 50 章，完整章节列表请加入书架后查看
+          </Typography>
+        )}
       </Paper>
 
       {/* Snackbar for notifications */}

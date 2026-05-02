@@ -59,8 +59,14 @@ function SearchResultsContent() {
   const [searchProgress, setSearchProgress] = useState({ completed: 0, total: 0 })
   const [foundCount, setFoundCount] = useState(0)
   const [availableCount, setAvailableCount] = useState(0)
+  const [customSources, setCustomSources] = useState<UserSourceConfig[]>([])
 
   const abortControllerRef = useRef<AbortController | null>(null)
+
+  // Load custom sources on mount
+  useEffect(() => {
+    setCustomSources(getEnabledCustomSources())
+  }, [getEnabledCustomSources])
 
   useEffect(() => {
     if (query.trim()) {
@@ -87,6 +93,7 @@ function SearchResultsContent() {
     setResults([])
     setFoundCount(0)
     setAvailableCount(0)
+    setCustomSources(getEnabledCustomSources())
 
     const customSources = getEnabledCustomSources()
 
@@ -313,12 +320,15 @@ function SearchResultsContent() {
             </Typography>
 
             <Grid container spacing={2}>
-              {displayResults.map((novel, index) => (
+              {displayResults.map((novel, index) => {
+                const sourceConfig = customSources.find(s => s.sourceId === novel.sourceId)?.config
+                const sourceConfigEncoded = sourceConfig ? encodeURIComponent(JSON.stringify(sourceConfig)) : ''
+                return (
                 <Grid key={`${novel.title}-${novel.sourceId}-${index}`} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}>
                   <Card sx={{ height: '100%' }}>
                     <CardActionArea
                       component={Link}
-                      href={`/novel/${encodeURIComponent(novel.title)}?source=${encodeURIComponent(novel.sourceName)}&bookUrl=${encodeURIComponent(novel.bookUrl)}`}
+                      href={`/novel/${encodeURIComponent(novel.title)}?source=${encodeURIComponent(novel.sourceName)}&bookUrl=${encodeURIComponent(novel.bookUrl)}&sourceConfig=${sourceConfigEncoded}`}
                     >
                       <CardMedia
                         component="img"
@@ -339,7 +349,7 @@ function SearchResultsContent() {
                     </CardActionArea>
                   </Card>
                 </Grid>
-              ))}
+              )})}
             </Grid>
 
             {/* 分页 */}

@@ -1,8 +1,10 @@
-import { getRedisClient, isRedisAvailable } from './redis'
+// Simple in-memory rate limiting (no Redis required)
+// Note: This is per-instance, not distributed. For production, use proper rate limiting.
 
-// Rate limit configuration
-const RATE_LIMIT_WINDOW = 60 // 60 seconds sliding window
-const RATE_LIMIT_MAX = 10 // 10 requests per minute
+const RATE_LIMIT_WINDOW = 60 * 1000 // 60 seconds
+const RATE_LIMIT_MAX = 30 // 30 requests per minute per IP
+
+const requestCounts = new Map<string, { count: number; resetAt: number }>()
 
 export interface RateLimitResult {
   allowed: boolean
@@ -10,14 +12,9 @@ export interface RateLimitResult {
   resetAt: number
 }
 
-/**
- * Extract IP address from request
- */
 export function extractIp(request: Request): string {
-  // Check for forwarded headers (reverse proxy)
   const forwarded = request.headers.get('x-forwarded-for')
   if (forwarded) {
-    // Take the first IP in the chain
     return forwarded.split(',')[0].trim()
   }
 
@@ -26,85 +23,43 @@ export function extractIp(request: Request): string {
     return realIp.trim()
   }
 
-  // Fallback to a default for development
   return 'unknown'
 }
 
-/**
- * Check rate limit for an IP address
- * Uses sliding window algorithm with Redis
- */
-export async function rateLimit(ip: string): Promise<RateLimitResult> {
-  // If Redis is not available, skip rate limiting (fail open)
-  if (!isRedisAvailable()) {
+export function rateLimit(ip: string): RateLimitResult {
+  const now = Date.now()
+  const entry = requestCounts.get(ip)
+
+  if (!entry || now > entry.resetAt) {
+    // New window
+    requestCounts.set(ip, {
+      count: 1,
+      resetAt: now + RATE_LIMIT_WINDOW,
+    })
     return {
       allowed: true,
-      remaining: RATE_LIMIT_MAX,
-      resetAt: Date.now() + RATE_LIMIT_WINDOW * 1000,
+      remaining: RATE_LIMIT_MAX - 1,
+      resetAt: now + RATE_LIMIT_WINDOW,
     }
   }
 
-  const redis = getRedisClient()
-  const key = `rate_limit:${ip}`
-  const now = Date.now()
-  const windowStart = now - RATE_LIMIT_WINDOW * 1000
-
-  try {
-    // Use Redis transaction for atomic operations
-    const pipeline = redis.pipeline()
-
-    // Remove old entries outside the window
-    pipeline.zremrangebyscore(key, 0, windowStart)
-
-    // Count current entries in the window
-    pipeline.zcard(key)
-
-    // Execute the pipeline
-    const results = (await pipeline.exec()) as [
-      [null, number],
-      [null, number]
-    ]
-
-    // Get the count from results
-    const count = results[1][1]
-
-    if (count >= RATE_LIMIT_MAX) {
-      // Get the oldest entry to calculate reset time
-      const oldest = await redis.zrange(key, 0, 0, { withScores: true })
-      const oldestTime = oldest.length > 0 ? parseFloat((oldest[0] as { score: string }).score) : now
-
-      return {
-        allowed: false,
-        remaining: 0,
-        resetAt: Math.ceil(oldestTime + RATE_LIMIT_WINDOW * 1000),
-      }
-    }
-
-    // Add current request
-    await redis.zadd(key, { score: now, member: `${now}-${Math.random()}` })
-
-    // Set expiry on the key
-    await redis.expire(key, RATE_LIMIT_WINDOW)
-
+  if (entry.count >= RATE_LIMIT_MAX) {
     return {
-      allowed: true,
-      remaining: RATE_LIMIT_MAX - count - 1,
-      resetAt: now + RATE_LIMIT_WINDOW * 1000,
+      allowed: false,
+      remaining: 0,
+      resetAt: entry.resetAt,
     }
-  } catch (error) {
-    console.error('Rate limit error:', error)
-    // On error, allow the request (fail open)
-    return {
-      allowed: true,
-      remaining: RATE_LIMIT_MAX,
-      resetAt: now + RATE_LIMIT_WINDOW * 1000,
-    }
+  }
+
+  // Increment count
+  entry.count++
+  return {
+    allowed: true,
+    remaining: RATE_LIMIT_MAX - entry.count,
+    resetAt: entry.resetAt,
   }
 }
 
-/**
- * Create rate limit response headers
- */
 export function rateLimitHeaders(result: RateLimitResult): HeadersInit {
   return {
     'X-RateLimit-Limit': String(RATE_LIMIT_MAX),
@@ -113,13 +68,9 @@ export function rateLimitHeaders(result: RateLimitResult): HeadersInit {
   }
 }
 
-/**
- * Apply rate limiting to a request
- * Returns null if allowed, or a Response object with 429 if rate limited
- */
 export async function applyRateLimit(request: Request): Promise<Response | null> {
   const ip = extractIp(request)
-  const result = await rateLimit(ip)
+  const result = rateLimit(ip)
 
   if (!result.allowed) {
     const retryAfter = Math.ceil((result.resetAt - Date.now()) / 1000)
