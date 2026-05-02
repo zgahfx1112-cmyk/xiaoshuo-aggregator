@@ -467,8 +467,12 @@ export class SourceParser {
   private buildUrl(url: string): string {
     if (!url) return ''
     if (url.startsWith('http')) return url
-    if (url.startsWith('/')) return this.baseUrl + url
-    return this.baseUrl + '/' + url
+
+    // 确保只有一个斜杠
+    const base = this.baseUrl.endsWith('/') ? this.baseUrl.slice(0, -1) : this.baseUrl
+    const path = url.startsWith('/') ? url : '/' + url
+
+    return base + path
   }
 
   // Parse @put:{n:"rule",a:"rule"} 中的键值对
@@ -518,8 +522,8 @@ export class SourceParser {
     return this.parseRuleValue(html, rule) as string
   }
 
-  // Extract search URL from config (handle JS code wrapper)
-  private getSearchUrl(query: string): string | null {
+  // Extract search URL from config (handle JS code wrapper and POST config)
+  private getSearchUrl(query: string): { url: string; method: string; body?: string } | null {
     let searchUrl = this.config.searchUrl || ''
     if (!searchUrl) return null
 
@@ -529,21 +533,51 @@ export class SourceParser {
       searchUrl = jsMatch[1]
     }
 
-    // Replace placeholders - use encodeURIComponent for proper URL encoding
-    const encodedQuery = encodeURIComponent(query)
+    // Handle {{cookie.removeCookie(source.getKey())}} - 简化处理，移除这个前缀
+    searchUrl = searchUrl.replace(/\{\{cookie\.removeCookie\(source\.getKey\(\)\)\}\}/g, '')
 
+    // Parse POST request format: /ss/,{"body":"searchkey={{key}}","method":"POST"}
+    const postMatch = searchUrl.match(/([^,]+),\s*\{(.+)\}/)
+    if (postMatch) {
+      const urlPath = postMatch[1].trim()
+      let bodyConfig = postMatch[2]
+
+      // Replace placeholders in body
+      const encodedQuery = encodeURIComponent(query)
+      bodyConfig = bodyConfig.replace(/{{key}}/g, encodedQuery)
+      bodyConfig = bodyConfig.replace(/{key}/g, encodedQuery)
+
+      // Parse body and method from JSON-like string
+      // Format: "body":"searchkey=xxx","method":"POST"
+      const bodyMatch = bodyConfig.match(/"body"\s*:\s*"([^"]+)"/)
+      const methodMatch = bodyConfig.match(/"method"\s*:\s*"([^"]+)"/)
+
+      const body = bodyMatch ? bodyMatch[1] : undefined
+      const method = methodMatch ? methodMatch[1] : 'POST'
+
+      return {
+        url: this.buildUrl(urlPath),
+        method: method.toUpperCase(),
+        body,
+      }
+    }
+
+    // Regular GET request
+    const encodedQuery = encodeURIComponent(query)
     searchUrl = searchUrl.replace(/{{key}}/g, encodedQuery)
     searchUrl = searchUrl.replace(/{key}/g, encodedQuery)
     searchUrl = searchUrl.replace(/{{page}}/g, '1')
     searchUrl = searchUrl.replace(/{page}/g, '1')
 
-    // Build full URL
-    return this.buildUrl(searchUrl)
+    return {
+      url: this.buildUrl(searchUrl),
+      method: 'GET',
+    }
   }
 
   async parseSearch(query: string): Promise<SearchResult[]> {
-    const searchUrl = this.getSearchUrl(query)
-    if (!searchUrl) return []
+    const searchConfig = this.getSearchUrl(query)
+    if (!searchConfig) return []
 
     // Apply concurrent rate delay
     const rate = this.config.concurrentRate
@@ -555,11 +589,25 @@ export class SourceParser {
     }
 
     try {
-      const response = await retry(
-        () => this.httpClient.get(searchUrl!),
-        2,
-        1000
-      )
+      // Support POST requests
+      let response
+      if (searchConfig.method === 'POST' && searchConfig.body) {
+        response = await retry(
+          () => this.httpClient.post(searchConfig.url, searchConfig.body, {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+          }),
+          2,
+          1000
+        )
+      } else {
+        response = await retry(
+          () => this.httpClient.get(searchConfig.url),
+          2,
+          1000
+        )
+      }
 
       const responseData = response.data
       const config = this.config
