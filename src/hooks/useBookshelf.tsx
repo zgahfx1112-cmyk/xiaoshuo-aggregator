@@ -221,11 +221,38 @@ export function BookshelfProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const removeUserSource = useCallback((sourceId: string) => {
-    setUserSourceConfigs((prev) => prev.filter((s) => s.sourceId !== sourceId))
+    setUserSourceConfigs((prev) => {
+      const removedSource = prev.find(s => s.sourceId === sourceId)
+      const newConfigs = prev.filter((s) => s.sourceId !== sourceId)
+
+      // 检查是否需要删除空分组
+      if (removedSource?.groupId) {
+        const groupSources = newConfigs.filter(s => s.groupId === removedSource.groupId)
+        if (groupSources.length === 0) {
+          setSourceGroups((groups) => groups.filter(g => g.id !== removedSource.groupId))
+        }
+      }
+
+      return newConfigs
+    })
   }, [])
 
   const removeMultipleSources = useCallback((sourceIds: string[]) => {
-    setUserSourceConfigs((prev) => prev.filter((s) => !sourceIds.includes(s.sourceId)))
+    setUserSourceConfigs((prev) => {
+      const removedSources = prev.filter(s => sourceIds.includes(s.sourceId))
+      const newConfigs = prev.filter((s) => !sourceIds.includes(s.sourceId))
+
+      // 检查并删除空分组
+      const affectedGroupIds = new Set(removedSources.map(s => s.groupId).filter(Boolean))
+      for (const groupId of affectedGroupIds) {
+        const groupSources = newConfigs.filter(s => s.groupId === groupId)
+        if (groupSources.length === 0) {
+          setSourceGroups((groups) => groups.filter(g => g.id !== groupId))
+        }
+      }
+
+      return newConfigs
+    })
   }, [])
 
   const getEnabledCustomSources = useCallback(() => {

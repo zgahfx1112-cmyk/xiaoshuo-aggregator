@@ -574,18 +574,25 @@ export default function SourcesPage() {
         {sourceGroups.length > 0 && (
           <Paper sx={{ mt: 2, p: 2 }}>
             <Typography variant="subtitle1" gutterBottom>分组管理</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              点击分组名称删除分组（书源不会被删除，只取消分组）
+            </Typography>
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-              {sourceGroups.map(group => (
-                <Chip
-                  key={group.id}
-                  label={`${group.name} (${getSourcesByGroup(group.id).length})`}
-                  onDelete={() => {
-                    removeGroup(group.id)
-                    showSnackbar('分组已删除', 'info')
-                  }}
-                  variant="outlined"
-                />
-              ))}
+              {sourceGroups.map(group => {
+                const count = getSourcesByGroup(group.id).length
+                return (
+                  <Chip
+                    key={group.id}
+                    label={`${group.name} (${count})`}
+                    onDelete={() => {
+                      removeGroup(group.id)
+                      showSnackbar(`分组已删除，${count} 个书源已取消分组`, 'info')
+                    }}
+                    variant={count === 0 ? 'outlined' : 'filled'}
+                    color={count === 0 ? 'warning' : 'default'}
+                  />
+                )
+              })}
             </Box>
           </Paper>
         )}
